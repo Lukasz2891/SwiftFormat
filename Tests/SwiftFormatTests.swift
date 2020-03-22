@@ -29,17 +29,16 @@
 //  SOFTWARE.
 //
 
-import SwiftFormat
 import XCTest
+@testable import SwiftFormat
 
 class SwiftFormatTests: XCTestCase {
-
     // MARK: enumerateFiles
 
     func testInputFileMatchesOutputFileForNilOutput() {
         var files = [URL]()
         let inputURL = URL(fileURLWithPath: #file)
-        let errors = enumerateFiles(withInputURL: inputURL) { inputURL, outputURL in
+        let errors = enumerateFiles(withInputURL: inputURL) { inputURL, outputURL, _ in
             XCTAssertEqual(inputURL, outputURL)
             XCTAssertEqual(inputURL, URL(fileURLWithPath: #file))
             return { files.append(inputURL) }
@@ -51,7 +50,7 @@ class SwiftFormatTests: XCTestCase {
     func testInputFileMatchesOutputFileForSameOutput() {
         var files = [URL]()
         let inputURL = URL(fileURLWithPath: #file)
-        let errors = enumerateFiles(withInputURL: inputURL, outputURL: inputURL) { inputURL, outputURL in
+        let errors = enumerateFiles(withInputURL: inputURL, outputURL: inputURL) { inputURL, outputURL, _ in
             XCTAssertEqual(inputURL, outputURL)
             XCTAssertEqual(inputURL, URL(fileURLWithPath: #file))
             return { files.append(inputURL) }
@@ -63,44 +62,45 @@ class SwiftFormatTests: XCTestCase {
     func testInputFilesMatchOutputFilesForNilOutput() {
         var files = [URL]()
         let inputURL = URL(fileURLWithPath: #file).deletingLastPathComponent().deletingLastPathComponent()
-        let errors = enumerateFiles(withInputURL: inputURL) { inputURL, outputURL in
+        let errors = enumerateFiles(withInputURL: inputURL) { inputURL, outputURL, _ in
             XCTAssertEqual(inputURL, outputURL)
             return { files.append(inputURL) }
         }
         XCTAssertEqual(errors.count, 0)
-        XCTAssertEqual(files.count, 24)
+        XCTAssertEqual(files.count, 45)
     }
 
     func testInputFilesMatchOutputFilesForSameOutput() {
         var files = [URL]()
         let inputURL = URL(fileURLWithPath: #file).deletingLastPathComponent().deletingLastPathComponent()
-        let errors = enumerateFiles(withInputURL: inputURL, outputURL: inputURL) { inputURL, outputURL in
+        let errors = enumerateFiles(withInputURL: inputURL, outputURL: inputURL) { inputURL, outputURL, _ in
             XCTAssertEqual(inputURL, outputURL)
             return { files.append(inputURL) }
         }
         XCTAssertEqual(errors.count, 0)
-        XCTAssertEqual(files.count, 24)
+        XCTAssertEqual(files.count, 45)
     }
 
     func testInputFileNotEnumeratedWhenExcluded() {
         var files = [URL]()
         let currentFile = URL(fileURLWithPath: #file)
-        let excludedURLs = [currentFile.deletingLastPathComponent()]
+        let options = Options(fileOptions: FileOptions(excludedGlobs: [
+            Glob.path(currentFile.deletingLastPathComponent().path),
+        ]))
         let inputURL = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        let errors = enumerateFiles(withInputURL: inputURL, excluding: excludedURLs, outputURL: inputURL) { inputURL, outputURL in
+        let errors = enumerateFiles(withInputURL: inputURL, outputURL: inputURL, options: options) { inputURL, outputURL, _ in
             XCTAssertEqual(inputURL, outputURL)
             return { files.append(inputURL) }
         }
         XCTAssertEqual(errors.count, 0)
-        XCTAssertEqual(files.count, 17)
+        XCTAssertEqual(files.count, 32)
     }
 
     // MARK: format function
 
     func testFormatReturnsInputWithNoRules() {
         let input = "foo ()  "
-        let output = "foo ()  "
-        XCTAssertEqual(try format(input, rules: []), output)
+        XCTAssertEqual(try format(input, rules: []), input)
     }
 
     func testFormatUsesDefaultRulesIfNoneSpecified() {
@@ -109,12 +109,28 @@ class SwiftFormatTests: XCTestCase {
         XCTAssertEqual(try format(input), output)
     }
 
+    // MARK: lint function
+
+    func testLintReturnsNoChangesWithNoRules() {
+        let input = "foo ()  "
+        XCTAssertEqual(try lint(input, rules: []), [])
+    }
+
+    func testLintWithDefaultRules() {
+        let input = "foo ()  "
+        XCTAssertEqual(try lint(input), [
+            .init(line: 1, rule: FormatRules.linebreakAtEndOfFile, filePath: nil),
+            .init(line: 1, rule: FormatRules.spaceAroundParens, filePath: nil),
+            .init(line: 1, rule: FormatRules.trailingSpace, filePath: nil),
+        ])
+    }
+
     // MARK: fragments
 
     func testFormattingFailsForFragment() {
         let input = "foo () {"
         XCTAssertThrowsError(try format(input, rules: [])) {
-            XCTAssertEqual("\($0)", "unexpected end of file at 1:8")
+            XCTAssertEqual("\($0)", "Unexpected end of file at 1:9")
         }
     }
 
@@ -129,7 +145,7 @@ class SwiftFormatTests: XCTestCase {
     func testFormattingFailsForConflict() {
         let input = "foo () {\n<<<<<< old\n    bar()\n======\n    baz()\n>>>>>> new\n}"
         XCTAssertThrowsError(try format(input, rules: [])) {
-            XCTAssertEqual("\($0)", "found conflict marker <<<<<< at 2:0")
+            XCTAssertEqual("\($0)", "Found conflict marker <<<<<< at 2:1")
         }
     }
 
@@ -139,13 +155,101 @@ class SwiftFormatTests: XCTestCase {
         XCTAssertEqual(try format(input, rules: [], options: options), input)
     }
 
+    // MARK: empty file
+
+    func testNoTimeoutForEmptyFile() {
+        let input = ""
+        XCTAssertEqual(try format(input), input)
+    }
+
     // MARK: offsetForToken
 
     func testOffsetForToken() {
-        let source = "// a comment\n    let foo = 5\n"
-        let tokens = tokenize(source)
-        let (line, column) = offsetForToken(at: 7, in: tokens)
-        XCTAssertEqual(line, 2)
-        XCTAssertEqual(column, 8)
+        let tokens = tokenize("// a comment\n    let foo = 5\n")
+        let offset = offsetForToken(at: 7, in: tokens, tabWidth: 1)
+        XCTAssertEqual(offset, SourceOffset(line: 2, column: 9))
+    }
+
+    func testOffsetForTokenWithTabs() {
+        let tokens = tokenize("// a comment\n\tlet foo = 5\n")
+        let offset = offsetForToken(at: 7, in: tokens, tabWidth: 2)
+        XCTAssertEqual(offset, SourceOffset(line: 2, column: 7))
+    }
+
+    // MARK: tokenIndexForOffset
+
+    func testTokenIndexForOffset() {
+        let tokens = tokenize("// a comment\n    let foo = 5\n")
+        let offset = SourceOffset(line: 2, column: 9)
+        XCTAssertEqual(tokenIndexForOffset(offset, in: tokens, tabWidth: 1), 7)
+    }
+
+    func testTokenIndexForOffsetWithTabs() {
+        let tokens = tokenize("// a comment\n\tlet foo = 5\n")
+        let offset = SourceOffset(line: 2, column: 7)
+        XCTAssertEqual(tokenIndexForOffset(offset, in: tokens, tabWidth: 2), 7)
+    }
+
+    // MARK: newOffset
+
+    func testNewOffsetsForUnchangedPosition() {
+        let tokens = tokenize("foo\nbar\nbaz")
+        let offset1 = SourceOffset(line: 1, column: 1)
+        let offset2 = SourceOffset(line: 2, column: 1)
+        let offset3 = SourceOffset(line: 3, column: 1)
+        XCTAssertEqual(newOffset(for: offset1, in: tokens, tabWidth: 1), offset1)
+        XCTAssertEqual(newOffset(for: offset2, in: tokens, tabWidth: 1), offset2)
+        XCTAssertEqual(newOffset(for: offset3, in: tokens, tabWidth: 1), offset3)
+    }
+
+    func testNewOffsetsForRemovedLine() throws {
+        let input = tokenize("foo\nbar\n\n\nbaz\nquux")
+        let offset1 = SourceOffset(line: 1, column: 1)
+        let offset2 = SourceOffset(line: 2, column: 1)
+        let offset3 = SourceOffset(line: 5, column: 1)
+        let offset4 = SourceOffset(line: 6, column: 1)
+        let output = try format(input, rules: [FormatRules.consecutiveBlankLines])
+        let expected3 = SourceOffset(line: 4, column: 1)
+        let expected4 = SourceOffset(line: 5, column: 1)
+        XCTAssertEqual(newOffset(for: offset1, in: output, tabWidth: 1), offset1)
+        XCTAssertEqual(newOffset(for: offset2, in: output, tabWidth: 1), offset2)
+        XCTAssertEqual(newOffset(for: offset3, in: output, tabWidth: 1), expected3)
+        XCTAssertEqual(newOffset(for: offset4, in: output, tabWidth: 1), expected4)
+    }
+
+    func testNewOffsetsForEmptyOutput() {
+        let offset = SourceOffset(line: 1, column: 1)
+        XCTAssertEqual(newOffset(for: offset, in: [], tabWidth: 1), offset)
+    }
+
+    // MARK: expand path
+
+    func testExpandPathWithRelativePath() {
+        XCTAssertEqual(
+            expandPath("relpath/to/file.swift", in: "/dir").path,
+            "/dir/relpath/to/file.swift"
+        )
+    }
+
+    func testExpandPathWithFullPath() {
+        XCTAssertEqual(
+            expandPath("/full/path/to/file.swift", in: "/dir").path,
+            "/full/path/to/file.swift"
+        )
+    }
+
+    func testExpandPathWithUserPath() {
+        XCTAssertEqual(
+            expandPath("~/file.swift", in: "/dir").path,
+            NSString(string: "~/file.swift").expandingTildeInPath
+        )
+    }
+
+    // MARK: shared option inference
+
+    func testLinebreakInferredForBlankLinesBetweenScopes() {
+        let input = "class Foo {\r  func bar() {\r  }\r  func baz() {\r  }\r}"
+        let output = "class Foo {\r  func bar() {\r  }\r\r  func baz() {\r  }\r}"
+        XCTAssertEqual(try format(input, rules: [FormatRules.blankLinesBetweenScopes]), output)
     }
 }
