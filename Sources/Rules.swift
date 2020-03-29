@@ -47,7 +47,7 @@ public final class FormatRule: Equatable, Comparable {
         return deprecationMessage != nil
     }
 
-    fileprivate init(help: String,
+    fileprivate init(help: String = "",
                      orderAfter: [String] = [],
                      options: [String] = [],
                      sharedOptions: [String] = [],
@@ -677,7 +677,8 @@ public struct _FormatRules {
 
     /// Collapse all consecutive blank lines into a single blank line
     public let consecutiveBlankLines = FormatRule(
-        help: "Replace consecutive blank lines with a single blank line."
+        help: "Replace consecutive blank lines with a single blank line.",
+        orderAfter: ststLinebreakRules
     ) { formatter in
         formatter.forEach(.linebreak) { i, _ in
             guard let prevIndex = formatter.index(of: .nonSpace, before: i, if: { $0.isLinebreak }) else {
@@ -887,7 +888,7 @@ public struct _FormatRules {
     /// indenting can be configured with the `options` parameter of the formatter.
     public let indent = FormatRule(
         help: "Indent code in accordance with the scope level.",
-        orderAfter: ["wrap", "wrapArguments"],
+        orderAfter: ["wrap", "wrapArguments"] + ststLinebreakRules,
         options: ["indent", "tabwidth", "indentcase", "ifdef", "xcodeindentation"],
         sharedOptions: ["trimwhitespace"]
     ) { formatter in
@@ -4230,6 +4231,154 @@ public struct _FormatRules {
             let comment = Array(formatter.tokens[startIndex + 1 ..< endOfLine])
             formatter.insertTokens(comment, at: endOfLine + 1)
             formatter.removeTokens(inRange: startIndex + 1 ..< endOfLine)
+        }
+    }
+
+    public let ststLinebreakAfterClassExtensionStruct = FormatRule(orderAfter: ststOrderAfter + ["blankLinesAtStartOfScope"], _ststLinebreakAfterClassExtensionStruct)
+    public let ststLinebreakAtTheBeginning = FormatRule(orderAfter: ststOrderAfter + ["blankLinesAtStartOfScope"], _ststLinebreakAtTheBeginning)
+    public let ststLinebreakAfterSuper = FormatRule(orderAfter: ststOrderAfter, _ststLinebreakAfterSuper)
+    public let ststLinebreakAfterGuard = FormatRule(orderAfter: ststOrderAfter, _ststLinebreakAfterGuard)
+    public let ststLinebreakBeforeReturn = FormatRule(orderAfter: ststOrderAfter + ["ststLinebreakAfterGuard", "ststLinebreakAfterSuper"], _ststLinebreakBeforeReturn)
+
+    public let ststRedundantOneLineVarReturn = FormatRule(orderAfter: ststOrderAfter, _ststRedundantOneLineVarReturn)
+
+    private static let ststOrderAfter = ["wrap", "wrapArguments"]
+    private static let ststLinebreakRules = ["ststLinebreakAtTheBeginning", "ststLinebreakAfterGuard", "ststLinebreakAfterSuper", "ststLinebreakBeforeReturn", "ststLinebreakAfterClassExtensionStruct"]
+}
+
+private extension _FormatRules {
+    /// Linebreak after class, extension or struct
+    static func _ststLinebreakAfterClassExtensionStruct(_ formatter: Formatter) {
+        guard formatter.options.removeBlankLines else { return }
+
+        formatter.forEach(.keyword) { i, token in
+            guard ["class", "extension", "struct"].contains(token.string),
+                let classNameIndex = formatter.index(of: .identifier, after: i),
+                let startOfScopeIndex = formatter.index(of: .startOfScope, after: i) else {
+                return
+            }
+
+            // For cases like "protocol FooBar: class {}"
+            if token.string == "class" && classNameIndex >= startOfScopeIndex {
+                return
+            }
+
+            // For class' fields or methods
+            if token.string == "class" {
+                for index in i + 1 ..< startOfScopeIndex {
+                    let tempToken = formatter.tokens[index]
+                    if ["func", "let", "var"].contains(tempToken.string) {
+                        return
+                    }
+                }
+            }
+
+            guard let lineBreakAfterStartOfScopeIndex = formatter.index(of: .linebreak, after: startOfScopeIndex),
+                let nextLineBreakAfterStartOfScopeIndex = formatter.index(of: .linebreak, after: lineBreakAfterStartOfScopeIndex)
+            else {
+                return
+            }
+
+            var hasOnlySpacesBetweenLineBreaks = true
+            for index in lineBreakAfterStartOfScopeIndex + 1 ..< nextLineBreakAfterStartOfScopeIndex {
+                if !formatter.tokens[index].isSpace {
+                    hasOnlySpacesBetweenLineBreaks = false
+                    break
+                }
+            }
+
+            if !hasOnlySpacesBetweenLineBreaks {
+                formatter.insertLinebreak(at: lineBreakAfterStartOfScopeIndex + 1)
+            }
+        }
+    }
+
+    /// Linebreak after guard
+    static func _ststLinebreakAfterGuard(_ formatter: Formatter) {
+        guard formatter.options.removeBlankLines else { return }
+
+        formatter.forEach(.keyword("guard")) { i, token in
+            guard let startOfScopeIndex = formatter.index(of: .startOfScope("{"), after: i),
+                let endOfScopeIndex = formatter.index(of: .endOfScope("}"), after: startOfScopeIndex + 1),
+                let lineBreakAfterEndOfScopeIndex = formatter.index(of: .linebreak, after: endOfScopeIndex),
+                let nextToken = formatter.nextToken(after: lineBreakAfterEndOfScopeIndex),
+                nextToken.isSpaceOrCommentOrLinebreak == false && nextToken.isEndOfScope == false
+            else { return }
+
+            formatter.insertLinebreak(at: lineBreakAfterEndOfScopeIndex + 1)
+        }
+    }
+
+    /// Linebreak after super
+    static func _ststLinebreakAfterSuper(_ formatter: Formatter) {
+        guard formatter.options.removeBlankLines else { return }
+
+        formatter.forEach(.identifier) { i, token in
+            guard ["super"].contains(token.string),
+                let lineBreakAfterToken = formatter.index(of: .linebreak, after: i),
+                let nextToken = formatter.nextToken(after: lineBreakAfterToken),
+                nextToken.isSpaceOrCommentOrLinebreak == false && nextToken.isEndOfScope == false
+            else { return }
+
+            formatter.insertLinebreak(at: lineBreakAfterToken + 1)
+        }
+    }
+
+    /// Linebreak before return
+    static func _ststLinebreakBeforeReturn(_ formatter: Formatter) {
+        guard formatter.options.removeBlankLines else { return }
+
+        formatter.forEach(.keyword("return")) { i, token in
+            guard let prevToken = formatter.lastToken(before: i, where: { $0.isSpaceOrCommentOrLinebreak == false }),
+                prevToken.isStartOfScope == false,
+                let prevTokenIndex = formatter.index(of: prevToken, before: i)
+            else { return }
+
+            guard formatter.tokens[prevTokenIndex + 1 ..< i].filter({ $0.isLinebreak }).count != 2 else { return }
+
+            formatter.insertLinebreak(at: i)
+        }
+    }
+
+    /// Linebreak at the beginning of a file
+    static func _ststLinebreakAtTheBeginning(_ formatter: Formatter) {
+        guard formatter.tokens[0].isLinebreak == false else { return }
+
+        formatter.insertLinebreak(at: 0)
+    }
+
+    /// Remove redundant return in one-line computed variables
+    static func _ststRedundantOneLineVarReturn(_ formatter: Formatter) {
+        formatter.forEach(.keyword("var")) { i, _ in
+            guard let startIndex = formatter.index(of: .startOfScope("{"), after: i),
+                let returnToken = formatter.next(.keyword, after: startIndex),
+                returnToken.string == "return",
+                let returnIndex = formatter.index(of: .keyword("return"), after: startIndex),
+                let nonSpaceIndex = formatter.index(of: .nonSpaceOrCommentOrLinebreak, after: returnIndex)
+                else { return }
+
+            formatter.removeTokens(inRange: returnIndex ..< nonSpaceIndex)
+            formatter.removeTokens(inRange: startIndex + 1 ..< returnIndex)
+            formatter.insertToken(.space(" "), at: startIndex + 1)
+            
+            guard let endIndex = formatter.index(of: .endOfScope("}"), after: startIndex) else { return }
+
+            var eols: [Int] = []
+
+            var tmpStartIndex = startIndex
+
+            while let eolIndex = formatter.index(of: .linebreak, after: tmpStartIndex), i < endIndex {
+                eols.append(eolIndex)
+                tmpStartIndex = eolIndex
+            }
+
+            eols.reversed().forEach(formatter.removeToken)
+
+            guard let newEndIndex = formatter.index(of: .endOfScope("}"), after: startIndex),
+                let lastToken = formatter.lastToken(before: newEndIndex, where: { _ in true }),
+                lastToken.isSpace == false else { return }
+
+            formatter.insertToken(.space(" "), at: newEndIndex)
         }
     }
 }

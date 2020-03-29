@@ -11048,4 +11048,99 @@ class RulesTests: XCTestCase {
         """
         testFormatting(for: input, output, rule: FormatRules.leadingDelimiters)
     }
+
+    func testStStRedundantOneLineVarReturn() {
+        let input = """
+        var something: Int {
+
+            return 5
+
+        }
+        """
+        let output = """
+        var something: Int { 5 }
+        """
+
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantOneLineVarReturn], options: .default), output)
+    }
+
+    func testStstLinebreakAfterGuard() {
+        let input = """
+        guard let something = something else { return }
+        Aaaa()
+        """
+        let output = """
+        guard let something = something else { return }
+
+        Aaaa()
+        """
+
+        let options = FormatOptions(removeBlankLines: true)
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
+    }
+
+    func testStstLinebreakAfterGuardNoChange() {
+        let input = """
+        guard let something = something else { return }
+
+        Aaaa()
+        """
+        let output = input
+        let options = FormatOptions(removeBlankLines: true)
+
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
+    }
+
+    func testStstLinebreakAfterGuardAtTheEndNoChange() {
+        let input = """
+        {
+            guard let something = something else { return }
+            }
+        """
+        let output = input
+        let options = FormatOptions(removeBlankLines: true)
+
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
+    }
+
+    func testStstLinebreakBeforeReturn() {
+        let input = """
+        guard let something = something else { return }
+        return Aaaa()
+        """
+        let output = """
+        guard let something = something else { return }
+
+        return Aaaa()
+        """
+
+        let options = FormatOptions(removeBlankLines: true)
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
+    }
+
+    func testStstLinebreakBeforeReturnNoChange() {
+        let input = """
+        guard let something = something else { return }
+
+        return Aaaa()
+        """
+        let output = input
+
+        let options = FormatOptions(removeBlankLines: true)
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
+    }
+
+    func testStstLinebreakBeforeReturnSingleLinesNoChange() {
+        let input = """
+        if expression {
+            return iPhoneValue
+        } else {
+            return iPadValue
+        }
+        """
+        let output = input
+
+        let options = FormatOptions(removeBlankLines: true)
+        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
+    }
 }
