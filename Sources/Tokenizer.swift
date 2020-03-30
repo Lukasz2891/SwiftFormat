@@ -2,7 +2,7 @@
 //  Tokenizer.swift
 //  SwiftFormat
 //
-//  Version 0.33.8
+//  Version 0.44.6
 //
 //  Created by Nick Lockwood on 11/08/2016.
 //  Copyright 2016 Nick Lockwood
@@ -38,15 +38,15 @@ import Foundation
 // Used to speed up matching
 // Note: Any, Self, self, super, nil, true and false have been omitted deliberately, as they
 // behave like identifiers. So too have context-specific keywords such as the following:
-// associativity, convenience, dynamic, didSet, final, get, infix, indirect,
-// lazy, left, mutating, none, nonmutating, open, optional, override, postfix,
-// precedence, prefix, Protocol, required, right, set, Type, unowned, weak, willSet
+// any, associativity, convenience, didSet, dynamic, final, get, indirect, infix, lazy,
+// left, mutating, none, nonmutating, open, optional, override, postfix, precedence,
+// prefix, Protocol, required, right, set, some, Type, unowned, weak, willSet
 private let swiftKeywords = Set([
     "let", "return", "func", "var", "if", "public", "as", "else", "in", "import",
     "class", "try", "guard", "case", "for", "init", "extension", "private", "static",
     "fileprivate", "internal", "switch", "do", "catch", "enum", "struct", "throws",
-    "throw", "typealias", "where", "break", "deinit", "subscript", "lazy", "is",
-    "while", "associatedtype", "inout", "continue", "operator", "repeat", "rethrows",
+    "throw", "typealias", "where", "break", "deinit", "subscript", "is", "while",
+    "associatedtype", "inout", "continue", "operator", "repeat", "rethrows",
     "default", "protocol", "defer", /* Any, Self, self, super, nil, true, false */
 ])
 
@@ -57,6 +57,7 @@ public extension String {
     }
 
     /// Is this string a keyword in some contexts?
+    @available(*, deprecated, message: "Not reliable - use a different approach")
     var isContextualKeyword: Bool {
         switch self {
         case "Any", "super", "self", "nil", "true", "false",
@@ -65,6 +66,12 @@ public extension String {
         default:
             return isSwiftKeyword
         }
+    }
+
+    /// Is this string a valid operator?
+    var isOperator: Bool {
+        let tokens = tokenize(self)
+        return tokens.count == 1 && tokens[0].isOperator
     }
 }
 
@@ -76,6 +83,7 @@ public enum TokenType {
     case startOfScope
     case endOfScope
     case keyword
+    case delimiter
     case identifier
     case attribute
     case `operator`
@@ -114,10 +122,19 @@ public enum OperatorType {
     case postfix
 }
 
+// String delimiter info
+private struct StringDelimiterType {
+    var isMultiline: Bool
+    var hashCount: Int
+}
+
+// Original line number for token
+public typealias OriginalLine = Int
+
 /// All token types
 public enum Token: Equatable {
     case number(String, NumberType)
-    case linebreak(String)
+    case linebreak(String, OriginalLine)
     case startOfScope(String)
     case endOfScope(String)
     case delimiter(String)
@@ -129,11 +146,17 @@ public enum Token: Equatable {
     case commentBody(String)
     case error(String)
 
+    /// Backwards-compatible convenience function for creating linebreaks
+    @available(*, deprecated, message: "Use linebreak(String, OriginalLine) instead")
+    public static func linebreak(_ string: String) -> Token {
+        return linebreak(string, 1)
+    }
+
     /// The original token string
     public var string: String {
         switch self {
         case let .number(string, _),
-             let .linebreak(string),
+             let .linebreak(string, _),
              let .startOfScope(string),
              let .endOfScope(string),
              let .delimiter(string),
@@ -148,6 +171,23 @@ public enum Token: Equatable {
         }
     }
 
+    /// Returns the width (in characters) of the token
+    public func columnWidth(tabWidth: Int) -> Int {
+        switch self {
+        case let .space(string), let .stringBody(string), let .commentBody(string):
+            guard tabWidth > 1 else {
+                return string.count
+            }
+            return string.reduce(0) { count, character in
+                count + (character == "\t" ? tabWidth : 1)
+            }
+        case .linebreak:
+            return 0
+        default:
+            return string.count
+        }
+    }
+
     /// Returns the unescaped token string
     public func unescaped() -> String {
         switch self {
@@ -156,6 +196,7 @@ public enum Token: Equatable {
             var output = String.UnicodeScalarView()
             while let c = input.popFirst() {
                 if c == "\\" {
+                    _ = input.readCharacters { $0 == "#" }
                     if let c = input.popFirst() {
                         switch c {
                         case "\0":
@@ -239,6 +280,8 @@ public enum Token: Equatable {
             return isIdentifierOrKeyword
         case .attribute:
             return isAttribute
+        case .delimiter:
+            return isDelimiter
         case .operator:
             return isOperator
         case .unwrapOperator:
@@ -278,7 +321,7 @@ public enum Token: Equatable {
             return a == b ?
                 (c == d ? .exact : .typeAndString) :
                 (c == d ? .typeAndSubtype : .type)
-        case let (.linebreak(a), .linebreak(b)),
+        case let (.linebreak(a, _), .linebreak(b, _)),
              let (.startOfScope(a), .startOfScope(b)),
              let (.endOfScope(a), .endOfScope(b)),
              let (.delimiter(a), .delimiter(b)),
@@ -310,8 +353,9 @@ public enum Token: Equatable {
     }
 
     public var isAttribute: Bool { return isKeyword && string.hasPrefix("@") }
+    public var isDelimiter: Bool { return hasType(of: .delimiter("")) }
     public var isOperator: Bool { return hasType(of: .operator("", .none)) }
-    public var isUnwrapOperator: Bool { return isOperator("?") || isOperator("!") }
+    public var isUnwrapOperator: Bool { return isOperator("?", .postfix) || isOperator("!", .postfix) }
     public var isRangeOperator: Bool { return isOperator("...") || isOperator("..<") }
     public var isNumber: Bool { return hasType(of: .number("", .integer)) }
     public var isError: Bool { return hasType(of: .error("")) }
@@ -321,7 +365,7 @@ public enum Token: Equatable {
     public var isIdentifier: Bool { return hasType(of: .identifier("")) }
     public var isIdentifierOrKeyword: Bool { return isIdentifier || isKeyword }
     public var isSpace: Bool { return hasType(of: .space("")) }
-    public var isLinebreak: Bool { return hasType(of: .linebreak("")) }
+    public var isLinebreak: Bool { return hasType(of: .linebreak("", 0)) }
     public var isEndOfStatement: Bool { return self == .delimiter(";") || isLinebreak }
     public var isSpaceOrLinebreak: Bool { return isSpace || isLinebreak }
     public var isSpaceOrComment: Bool { return isSpace || isComment }
@@ -342,6 +386,13 @@ public enum Token: Equatable {
         return false
     }
 
+    public func isOperator(_ string: String, _ type: OperatorType) -> Bool {
+        if case .operator(string, type) = self {
+            return true
+        }
+        return false
+    }
+
     public var isComment: Bool {
         switch self {
         case .commentBody,
@@ -351,6 +402,40 @@ public enum Token: Equatable {
             return true
         default:
             return false
+        }
+    }
+
+    public var isStringDelimiter: Bool {
+        switch self {
+        case let .startOfScope(string), let .endOfScope(string):
+            return string.contains("\"")
+        default:
+            return false
+        }
+    }
+
+    public var isMultilineStringDelimiter: Bool {
+        return stringDelimiterType?.isMultiline == true
+    }
+
+    fileprivate var stringDelimiterType: StringDelimiterType? {
+        switch self {
+        case let .startOfScope(string), let .endOfScope(string):
+            var quoteCount = 0, hashCount = 0
+            for c in string {
+                switch c {
+                case "#": hashCount += 1
+                case "\"": quoteCount += 1
+                default: break
+                }
+            }
+            guard quoteCount > 0 else {
+                return nil
+            }
+            assert(quoteCount == 1 || quoteCount == 3)
+            return StringDelimiterType(isMultiline: quoteCount == 3, hashCount: hashCount)
+        default:
+            return nil
         }
     }
 
@@ -378,11 +463,12 @@ public enum Token: Equatable {
                 return closing == "*/"
             case "#if":
                 return closing == "#endif"
-            case "\"":
-                return closing == "\""
-            case "\"\"\"":
-                return closing == "\"\"\""
             default:
+                if let delimiterType = stringDelimiterType {
+                    let quotes = delimiterType.isMultiline ? "\"\"\"" : "\""
+                    let hashes = String(repeating: "#", count: delimiterType.hashCount)
+                    return closing == "\(quotes)\(hashes)"
+                }
                 return false
             }
         case .linebreak:
@@ -392,8 +478,7 @@ public enum Token: Equatable {
             default:
                 return false
             }
-        case .delimiter(":"):
-            // Special case, only used in tokenizer
+        case .delimiter(":"), .startOfScope(":"):
             switch token {
             case .endOfScope("case"), .endOfScope("default"), .operator("?", .infix):
                 return true
@@ -412,6 +497,8 @@ public enum Token: Equatable {
              .endOfScope("}"), .endOfScope(">"),
              .endOfScope("\""), .endOfScope("\"\"\""):
             return true
+        case let .keyword(name) where name.hasPrefix("#"):
+            return true
         default:
             return false
         }
@@ -419,21 +506,17 @@ public enum Token: Equatable {
 
     var isRvalue: Bool {
         switch self {
-        case .operator(".", _):
-            return true
         case .operator(_, .infix), .operator(_, .postfix):
             return false
         case .identifier, .number, .operator,
              .startOfScope("("), .startOfScope("["), .startOfScope("{"),
              .startOfScope("\""), .startOfScope("\"\"\""):
             return true
+        case let .keyword(name) where name.hasPrefix("#"):
+            return true
         default:
             return false
         }
-    }
-
-    public static func == (lhs: Token, rhs: Token) -> Bool {
-        return lhs.match(with: rhs) == .exact
     }
 }
 
@@ -604,6 +687,19 @@ private extension UnicodeScalarView {
         return false
     }
 
+    mutating func readString(_ string: String) -> Bool {
+        let scalars = string.unicodeScalars
+        var index = startIndex
+        for c in scalars {
+            guard index < endIndex, self[index] == c else {
+                return false
+            }
+            index = self.index(after: index)
+        }
+        removeFirst(scalars.count)
+        return true
+    }
+
     mutating func readToEndOfToken() -> String {
         return readCharacters { !$0.isSpace && !"\n\r".unicodeScalars.contains($0) } ?? ""
     }
@@ -617,31 +713,37 @@ private extension UnicodeScalarView {
     mutating func parseLineBreak() -> Token? {
         if read("\r") {
             if read("\n") {
-                return .linebreak("\r\n")
+                return .linebreak("\r\n", 0)
             }
-            return .linebreak("\r")
+            return .linebreak("\r", 0)
         }
-        return read("\n") ? .linebreak("\n") : nil
+        return read("\n") ? .linebreak("\n", 0) : nil
     }
 
     mutating func parseDelimiter() -> Token? {
-        return readCharacter(where: { ":;,".unicodeScalars.contains($0) }).map { .delimiter(String($0)) }
+        return readCharacter(where: {
+            ":;,".unicodeScalars.contains($0)
+        }).map { .delimiter(String($0)) }
+    }
+
+    mutating func parseStartOfString() -> Token? {
+        guard read("\"") else {
+            return nil
+        }
+        let multiline = readString("\"\"")
+        return .startOfScope(multiline ? "\"\"\"" : "\"")
     }
 
     mutating func parseStartOfScope() -> Token? {
-        if read("\"") {
-            let nextIndex = index(after: startIndex)
-            if nextIndex < endIndex, first == "\"", self[nextIndex] == "\"" {
-                removeFirst(2)
-                return .startOfScope("\"\"\"")
-            }
-            return .startOfScope("\"")
-        }
-        return readCharacter(where: { "<([{".unicodeScalars.contains($0) }).map { .startOfScope(String($0)) }
+        return parseStartOfString() ?? readCharacter(where: {
+            "<([{".unicodeScalars.contains($0)
+        }).map { .startOfScope(String($0)) }
     }
 
     mutating func parseEndOfScope() -> Token? {
-        return readCharacter(where: { "}])>".unicodeScalars.contains($0) }).map { .endOfScope(String($0)) }
+        return readCharacter(where: {
+            "}])>".unicodeScalars.contains($0)
+        }).map { .endOfScope(String($0)) }
     }
 
     mutating func parseOperator() -> Token? {
@@ -822,6 +924,10 @@ private extension UnicodeScalarView {
                 }
                 return .keyword("#" + identifier)
             }
+            let hashes = readCharacters { $0 == "#" } ?? ""
+            if case let .startOfScope(quotes)? = parseStartOfString() {
+                return .startOfScope("#" + hashes + quotes)
+            }
             self = start
         } else if read("@") {
             if let identifier = readIdentifier() {
@@ -947,34 +1053,40 @@ public func tokenize(_ source: String) -> [Token] {
     var tokens: [Token] = []
     var characters = UnicodeScalarView(source.unicodeScalars)
     var closedGenericScopeIndexes: [Int] = []
+    var lineNumber = 1
 
-    func processStringBody() {
+    func readHashes(upTo max: Int) -> Int {
+        var count = 0
+        while count < max, characters.read("#") {
+            count += 1
+        }
+        return count
+    }
+
+    func processStringBody(hashCount: Int) {
         var string = ""
         var escaped = false
+        let hashes = String(repeating: "#", count: hashCount)
         while let c = characters.popFirst() {
             switch c {
-            case "\\":
-                escaped = !escaped
-            case "\"":
-                if !escaped {
-                    if string != "" {
-                        tokens.append(.stringBody(string))
-                    }
-                    tokens.append(.endOfScope("\""))
-                    scopeIndexStack.removeLast()
-                    return
+            case "\\" where !escaped && characters.readString(hashes):
+                escaped = true
+                string.append("\\" + hashes)
+                continue
+            case "\"" where !escaped && characters.readString(hashes):
+                if string != "" {
+                    tokens.append(.stringBody(string))
                 }
-                escaped = false
-            case "(":
-                if escaped {
-                    if string != "" {
-                        tokens.append(.stringBody(string))
-                    }
-                    scopeIndexStack.append(tokens.count)
-                    tokens.append(.startOfScope("("))
-                    return
+                tokens.append(.endOfScope("\"" + hashes))
+                scopeIndexStack.removeLast()
+                return
+            case "(" where escaped:
+                if string != "" {
+                    tokens.append(.stringBody(string))
                 }
-                escaped = false
+                scopeIndexStack.append(tokens.count)
+                tokens.append(.startOfScope("("))
+                return
             default:
                 escaped = false
             }
@@ -985,70 +1097,65 @@ public func tokenize(_ source: String) -> [Token] {
         }
     }
 
-    func processMultilineStringBody() {
+    func processMultilineStringBody(hashCount: Int) {
         var string = ""
         var escaped = false
+        let hashes = String(repeating: "#", count: hashCount)
         while let c = characters.popFirst() {
             switch c {
-            case "\\":
-                escaped = !escaped
-            case "\"":
-                let nextIndex = characters.index(after: characters.startIndex)
-                if nextIndex < characters.endIndex, !escaped, tokens[scopeIndexStack.last!] == .startOfScope("\"\"\""), characters.first == "\"", characters[nextIndex] == "\"" {
-                    characters.removeFirst(2)
-                    if string != "" {
-                        tokens.append(.error(string)) // Not permitted by the spec
-                    } else {
-                        var offset = ""
-                        if case let .space(_offset) = tokens.last! {
-                            offset = _offset
+            case "\\" where !escaped && characters.readString(hashes):
+                escaped = true
+                string.append("\\" + hashes)
+                continue
+            case "\"" where !escaped && characters.readString("\"\"" + hashes):
+                if !string.isEmpty {
+                    tokens.append(.error(string)) // Not permitted by the spec
+                }
+                var offset = ""
+                if case let .space(_offset) = tokens.last! {
+                    offset = _offset
+                }
+                // Fix up indents
+                for index in (scopeIndexStack.last! ..< tokens.count - 1).reversed() {
+                    if case let .space(indent) = tokens[index], tokens[index - 1].isLinebreak {
+                        guard offset.isEmpty || indent.hasPrefix(offset) else {
+                            tokens[index] = .error(indent) // Mismatched whitespace
+                            break
                         }
-                        // Fix up indents
-                        for index in (scopeIndexStack.last! ..< tokens.count - 1).reversed() {
-                            if case let .space(indent) = tokens[index], tokens[index - 1].isLinebreak {
-                                guard offset.isEmpty || indent.hasPrefix(offset) else {
-                                    tokens[index] = .error(indent) // Mismatched whitespace
-                                    break
-                                }
-                                let remainder: String = String(indent[offset.endIndex ..< indent.endIndex])
-                                if case let .stringBody(body) = tokens[index + 1] {
-                                    tokens[index + 1] = .stringBody(remainder + body)
-                                } else {
-                                    tokens.insert(.stringBody(remainder), at: index + 1)
-                                }
-                                if offset.isEmpty {
-                                    tokens.remove(at: index)
-                                } else {
-                                    tokens[index] = .space(offset)
-                                }
-                            }
+                        let remainder: String = String(indent[offset.endIndex ..< indent.endIndex])
+                        if case let .stringBody(body) = tokens[index + 1] {
+                            tokens[index + 1] = .stringBody(remainder + body)
+                        } else {
+                            tokens.insert(.stringBody(remainder), at: index + 1)
+                        }
+                        if offset.isEmpty {
+                            tokens.remove(at: index)
+                        } else {
+                            tokens[index] = .space(offset)
                         }
                     }
-                    tokens.append(.endOfScope("\"\"\""))
-                    scopeIndexStack.removeLast()
-                    return
                 }
-                escaped = false
-            case "(":
-                if escaped {
-                    if string != "" {
-                        tokens.append(.stringBody(string))
-                    }
-                    scopeIndexStack.append(tokens.count)
-                    tokens.append(.startOfScope("("))
-                    return
+                tokens.append(.endOfScope("\"\"\"" + hashes))
+                scopeIndexStack.removeLast()
+                return
+            case "(" where escaped:
+                if string != "" {
+                    tokens.append(.stringBody(string))
                 }
-                escaped = false
+                scopeIndexStack.append(tokens.count)
+                tokens.append(.startOfScope("("))
+                return
             case "\r", "\n":
                 if string != "" {
                     tokens.append(.stringBody(string))
                     string = ""
                 }
                 if c == "\r", characters.read("\n") {
-                    tokens.append(.linebreak("\r\n"))
+                    tokens.append(.linebreak("\r\n", lineNumber))
                 } else {
-                    tokens.append(.linebreak(String(c)))
+                    tokens.append(.linebreak(String(c), lineNumber))
                 }
+                lineNumber += 1
                 if let space = characters.parseSpace() {
                     tokens.append(space)
                 }
@@ -1079,36 +1186,69 @@ public func tokenize(_ source: String) -> [Token] {
     }
 
     func processCommentBody() {
+        while let c = characters.readCharacter(where: { !"\r\n".unicodeScalars.contains($0) }) {
+            if c.isSpace {
+                space.append(Character(c))
+                continue
+            }
+            if space != "" {
+                if comment == "" {
+                    tokens.append(.space(space))
+                } else {
+                    comment += space
+                }
+                space = ""
+            }
+            comment.append(Character(c))
+        }
+        flushCommentBodyTokens()
+    }
+
+    func processMultilineCommentBody() {
         while let c = characters.popFirst() {
             switch c {
-            case "/":
-                if characters.read("*") {
-                    flushCommentBodyTokens()
-                    scopeIndexStack.append(tokens.count)
-                    tokens.append(.startOfScope("/*"))
-                    continue
-                }
-            case "*":
-                if characters.read("/") {
-                    flushCommentBodyTokens()
-                    tokens.append(.endOfScope("*/"))
-                    scopeIndexStack.removeLast()
-                    if scopeIndexStack.last == nil || tokens[scopeIndexStack.last!] != .startOfScope("/*") {
-                        return
-                    }
-                    continue
-                }
-            case "\n":
+            case "/" where characters.read("*"):
                 flushCommentBodyTokens()
-                tokens.append(.linebreak("\n"))
+                scopeIndexStack.append(tokens.count)
+                tokens.append(.startOfScope("/*"))
                 continue
-            case "\r":
+            case "*" where characters.read("/"):
                 flushCommentBodyTokens()
-                if characters.read("\n") {
-                    tokens.append(.linebreak("\r\n"))
-                } else {
-                    tokens.append(.linebreak("\r"))
+                // Fix up indents
+                var baseIndent = ""
+                for index in scopeIndexStack.last! ..< tokens.count - 1 {
+                    if case let .space(indent) = tokens[index], tokens[index - 1].isLinebreak,
+                        tokens.count > index, case .commentBody = tokens[index + 1],
+                        baseIndent.isEmpty || indent.count < baseIndent.count {
+                        baseIndent = indent
+                    }
                 }
+                for index in (scopeIndexStack.last! ..< tokens.count - 1).reversed() {
+                    if case let .space(indent) = tokens[index], tokens[index - 1].isLinebreak,
+                        tokens.count > index, case let .commentBody(body) = tokens[index + 1],
+                        indent.hasPrefix(baseIndent) {
+                        tokens[index + 1] = .commentBody(indent.dropFirst(baseIndent.count) + body)
+                        if baseIndent.isEmpty {
+                            tokens.remove(at: index)
+                        } else {
+                            tokens[index] = .space(baseIndent)
+                        }
+                    }
+                }
+                tokens.append(.endOfScope("*/"))
+                scopeIndexStack.removeLast()
+                if scopeIndexStack.last == nil || tokens[scopeIndexStack.last!] != .startOfScope("/*") {
+                    return
+                }
+                continue
+            case "\n", "\r":
+                flushCommentBodyTokens()
+                if c == "\r", characters.read("\n") {
+                    tokens.append(.linebreak("\r\n", lineNumber))
+                } else {
+                    tokens.append(.linebreak(String(c), lineNumber))
+                }
+                lineNumber += 1
                 continue
             default:
                 if c.isSpace {
@@ -1127,25 +1267,6 @@ public func tokenize(_ source: String) -> [Token] {
             comment.append(Character(c))
         }
         // We shouldn't actually get here, unless code is malformed
-        flushCommentBodyTokens()
-    }
-
-    func processSingleLineCommentBody() {
-        while let c = characters.readCharacter(where: { !"\r\n".unicodeScalars.contains($0) }) {
-            if c.isSpace {
-                space.append(Character(c))
-                continue
-            }
-            if space != "" {
-                if comment == "" {
-                    tokens.append(.space(space))
-                } else {
-                    comment += space
-                }
-                space = ""
-            }
-            comment.append(Character(c))
-        }
         flushCommentBodyTokens()
     }
 
@@ -1174,9 +1295,9 @@ public func tokenize(_ source: String) -> [Token] {
 
     func isUnwrapOperator(at index: Int) -> Bool {
         let token = tokens[index]
-        if case let .operator(string, _) = token, ["?", "!"].contains(string) &&
-            index > 0 && !tokens[index - 1].isSpaceOrLinebreak {
-            return true
+        if case let .operator(string, _) = token, ["?", "!"].contains(string), index > 0 {
+            let token = tokens[index - 1]
+            return !token.isSpaceOrLinebreak && !token.isStartOfScope
         }
         return false
     }
@@ -1198,7 +1319,7 @@ public func tokenize(_ source: String) -> [Token] {
             tokens.remove(at: index + 1)
         }
         var index = index
-        while let prevToken: Token = index > 1 ? tokens[index - 1] : nil,
+        while let prevToken: Token = index > 0 ? tokens[index - 1] : nil,
             case let .operator(prevString, _) = prevToken, !isUnwrapOperator(at: index - 1),
             prevString.hasPrefix(".") || !string.contains(".") {
             if scopeIndexStack.last == index - 1 {
@@ -1210,7 +1331,7 @@ public func tokenize(_ source: String) -> [Token] {
             tokens.remove(at: index)
             index -= 1
         }
-        setSymbolType(at: index)
+        setOperatorType(at: index)
         // Fix ternary that may not have been correctly closed in the first pass
         if let scopeIndex = scopeIndexStack.last, tokens[scopeIndex] == .operator("?", .infix) {
             for i in index ..< tokens.count where tokens[i] == .delimiter(":") {
@@ -1221,7 +1342,7 @@ public func tokenize(_ source: String) -> [Token] {
         }
     }
 
-    func setSymbolType(at i: Int) {
+    func setOperatorType(at i: Int) {
         let token = tokens[i]
         guard case let .operator(string, currentType) = token else {
             assertionFailure()
@@ -1256,10 +1377,12 @@ public func tokenize(_ source: String) -> [Token] {
                     scopeIndexStack.append(i) // TODO: should we be doing this here?
                 }
                 type = .infix
-                break
+            } else if !prevToken.isStartOfScope {
+                type = .postfix
+            } else {
+                type = .none
             }
-            type = .postfix
-        case "!" where !prevToken.isSpaceOrCommentOrLinebreak:
+        case "!" where !prevToken.isSpaceOrCommentOrLinebreak && !prevToken.isStartOfScope:
             type = .postfix
         default:
             guard let nextNonSpaceToken =
@@ -1275,8 +1398,8 @@ public func tokenize(_ source: String) -> [Token] {
                 type = prevToken.isLvalue ? .infix : .prefix
             } else if prevToken.isLvalue {
                 type = .postfix
-            } else if prevToken.isSpaceOrCommentOrLinebreak && prevNonSpaceToken.isLvalue &&
-                nextToken.isSpaceOrCommentOrLinebreak && nextNonSpaceToken.isRvalue {
+            } else if prevToken.isSpaceOrCommentOrLinebreak, prevNonSpaceToken.isLvalue,
+                nextToken.isSpaceOrCommentOrLinebreak, nextNonSpaceToken.isRvalue {
                 type = .infix
             } else {
                 // TODO: should we add an `identifier` type?
@@ -1310,45 +1433,74 @@ public func tokenize(_ source: String) -> [Token] {
 
     func processToken() {
         let token = tokens.last!
+        let count = tokens.count
         switch token {
         case let .keyword(string):
             // Track switch/case statements
-            if let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: tokens.count - 1),
+            if let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: count - 1),
                 case .operator(".", _) = tokens[prevIndex] {
                 tokens[tokens.count - 1] = .identifier(string)
                 processToken()
                 return
             }
             fallthrough
-        case .identifier, .number:
-            let count = tokens.count
+        case .identifier:
             if count > 1, case .number = tokens[count - 2] {
                 tokens[count - 1] = .error(token.string)
             }
+        case let .number(string, _) where count > 1:
+            switch tokens[count - 2] {
+            case .number:
+                tokens[count - 1] = .error(string)
+            case .operator(".", _):
+                tokens[count - 1] = .identifier(string)
+            default:
+                break
+            }
         case .operator:
-            stitchOperators(at: tokens.count - 1)
-        case .startOfScope("<"):
-            if tokens.count >= 2 && tokens[tokens.count - 2].isOperator,
-                let index = index(of: .nonSpaceOrCommentOrLinebreak, before: tokens.count - 2),
-                ![.keyword("func"), .keyword("init")].contains(tokens[index]) {
+            stitchOperators(at: count - 1)
+        case .startOfScope("<") where count >= 2:
+            if tokens[count - 2].isOperator,
+                index(of: .nonSpaceOrCommentOrLinebreak, before: count - 2).map({
+                    ![.keyword("func"), .keyword("init")].contains(tokens[$0])
+                }) ?? true {
                 tokens[tokens.count - 1] = .operator("<", .none)
-                stitchOperators(at: tokens.count - 1)
+                stitchOperators(at: count - 1)
                 processToken()
                 return
             }
             fallthrough
         case .startOfScope:
             closedGenericScopeIndexes.removeAll()
+        case let .linebreak(string, line):
+            if line == 0 {
+                tokens[count - 1] = .linebreak(string, lineNumber)
+                lineNumber += 1
+            } else {
+                lineNumber = line + 1
+            }
         default:
             break
         }
         if !token.isSpaceOrCommentOrLinebreak {
-            if let prevIndex = index(of: .nonSpaceOrComment, before: tokens.count - 1),
+            if let prevIndex = index(of: .nonSpaceOrComment, before: count - 1),
                 case .endOfScope(">") = tokens[prevIndex] {
                 // Fix up misidentified generic that is actually a pair of operators
                 switch token {
-                case .operator("=", _) where prevIndex == tokens.count - 2,
-                     .identifier, .number, .startOfScope("\""), .startOfScope("\"\"\""):
+                case .operator("?", _), .operator("!", _), .operator("&", _),
+                     .operator(".", _), .operator("...", _), .operator("->", _),
+                     .operator("=", _) where prevIndex != count - 2:
+                    break
+                case .operator("=", _) where prevIndex == count - 2:
+                    guard let startIndex = index(of: .startOfScope, before: count - 1),
+                        tokens[startIndex] == .startOfScope("<"),
+                        let prevIndex = index(of: .nonSpaceOrComment, before: startIndex),
+                        case .identifier = tokens[prevIndex],
+                        let prevPrevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: prevIndex),
+                        tokens[prevPrevIndex] == .delimiter(":") else {
+                        fallthrough
+                    }
+                case .operator, .identifier, .number, .startOfScope("\""), .startOfScope("\"\"\""):
                     convertClosingChevronToSymbol(at: prevIndex, andOpeningChevron: true)
                     processToken()
                     return
@@ -1356,9 +1508,9 @@ public func tokenize(_ source: String) -> [Token] {
                     break
                 }
             }
-            if let lastSymbolIndex = index(of: .operator, before: tokens.count - 1) {
+            if let lastSymbolIndex = index(of: .operator, before: count - 1) {
                 // Set operator type
-                setSymbolType(at: lastSymbolIndex)
+                setOperatorType(at: lastSymbolIndex)
             }
         }
         // Handle scope
@@ -1380,10 +1532,18 @@ public func tokenize(_ source: String) -> [Token] {
                     guard let scope = scopeIndexStack.last.map({ tokens[$0] }) else {
                         break
                     }
-                    if scope == .startOfScope("\"") {
-                        processStringBody()
-                    } else if scope == .startOfScope("\"\"\"") {
-                        processMultilineStringBody()
+                    if let delimiterType = scope.stringDelimiterType {
+                        if delimiterType.isMultiline {
+                            processMultilineStringBody(hashCount: delimiterType.hashCount)
+                        } else {
+                            processStringBody(hashCount: delimiterType.hashCount)
+                        }
+                    }
+                case .endOfScope(">"):
+                    if scope == .startOfScope("<"), scopeIndex == count - 2 {
+                        convertOpeningChevronToSymbol(at: count - 2)
+                        processToken()
+                        return
                     }
                 default:
                     break
@@ -1399,8 +1559,8 @@ public func tokenize(_ source: String) -> [Token] {
                 switch token {
                 case let .operator(string, _):
                     switch string {
-                    case ".", "==", "?", "!", "&":
-                        if scopeIndex == tokens.count - 2 {
+                    case ".", "==", "?", "!", "&", "->":
+                        if scopeIndex == count - 2 {
                             // These are allowed in a generic, but not as the first character
                             fallthrough
                         }
@@ -1427,7 +1587,7 @@ public func tokenize(_ source: String) -> [Token] {
                 }
             } else if token == .delimiter(":"),
                 scope == .startOfScope("(") || scope == .startOfScope("["),
-                let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: tokens.count - 1),
+                let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: count - 1),
                 tokens[prevIndex].isIdentifierOrKeyword,
                 let prevPrevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: prevIndex) {
                 if case let .keyword(name) = tokens[prevIndex] {
@@ -1438,10 +1598,12 @@ public func tokenize(_ source: String) -> [Token] {
                 }
             } else if case let .keyword(string) = token {
                 var scope = scope
+                var scopeIndex = scopeIndex
                 var scopeStackIndex = scopeIndexStack.count - 1
                 while scopeStackIndex > 0, scope == .startOfScope("#if") {
                     scopeStackIndex -= 1
-                    scope = tokens[scopeIndexStack[scopeStackIndex]]
+                    scopeIndex = scopeIndexStack[scopeStackIndex]
+                    scope = tokens[scopeIndex]
                 }
                 if [.startOfScope("{"), .startOfScope(":")].contains(scope) {
                     switch string {
@@ -1450,11 +1612,17 @@ public func tokenize(_ source: String) -> [Token] {
                         processToken()
                         return
                     case "case":
-                        if let keywordIndex = index(of: .keyword, before: scopeIndex),
-                            case .keyword("enum") = tokens[keywordIndex] {
-                            break
+                        if let keywordIndex = index(of: .keyword, before: scopeIndex) {
+                            var keyword = tokens[keywordIndex]
+                            if case .keyword("where") = keyword,
+                                let keywordIndex = index(of: .keyword, before: keywordIndex) {
+                                keyword = tokens[keywordIndex]
+                            }
+                            if case .keyword("enum") = keyword {
+                                break
+                            }
                         }
-                        if let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: tokens.count - 1) {
+                        if let prevIndex = index(of: .nonSpaceOrCommentOrLinebreak, before: count - 1) {
                             switch tokens[prevIndex] {
                             case .keyword("if"),
                                  .keyword("guard"),
@@ -1490,20 +1658,22 @@ public func tokenize(_ source: String) -> [Token] {
         case let .startOfScope(string):
             scopeIndexStack.append(tokens.count - 1)
             switch string {
-            case "\"":
-                processStringBody()
-            case "\"\"\"":
-                processMultilineStringBody()
             case "/*":
-                processCommentBody()
+                processMultilineCommentBody()
             case "//":
-                processSingleLineCommentBody()
+                processCommentBody()
             default:
-                break
+                if let delimiterType = token.stringDelimiterType {
+                    if delimiterType.isMultiline {
+                        processMultilineStringBody(hashCount: delimiterType.hashCount)
+                    } else {
+                        processStringBody(hashCount: delimiterType.hashCount)
+                    }
+                }
             }
         case .endOfScope(">"):
             // Misidentified > as closing generic scope
-            convertClosingChevronToSymbol(at: tokens.count - 1, andOpeningChevron: false)
+            convertClosingChevronToSymbol(at: count - 1, andOpeningChevron: false)
             return
         case let .endOfScope(string):
             if ["case", "default"].contains(string), let scopeIndex = scopeIndexStack.last,
@@ -1512,7 +1682,7 @@ public func tokenize(_ source: String) -> [Token] {
                 return
             }
             // Previous scope wasn't closed correctly
-            tokens[tokens.count - 1] = .error(string)
+            tokens[count - 1] = .error(string)
             return
         default:
             break
@@ -1523,7 +1693,7 @@ public func tokenize(_ source: String) -> [Token] {
     if source.hasPrefix("#!") {
         characters.removeFirst(2)
         tokens.append(.startOfScope("#!"))
-        processSingleLineCommentBody()
+        processCommentBody()
     }
 
     // Parse tokens
@@ -1551,7 +1721,7 @@ public func tokenize(_ source: String) -> [Token] {
 
     // Set final operator type
     if let lastSymbolIndex = index(of: .operator, before: tokens.count) {
-        setSymbolType(at: lastSymbolIndex)
+        setOperatorType(at: lastSymbolIndex)
     }
 
     return tokens

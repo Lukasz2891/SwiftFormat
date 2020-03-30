@@ -29,133 +29,25 @@
 //  SOFTWARE.
 //
 
-@testable import SwiftFormat
 import XCTest
+@testable import SwiftFormat
 
-private var readme: String = {
-    let directoryURL = URL(fileURLWithPath: #file).deletingLastPathComponent().deletingLastPathComponent()
-    let readmeURL = directoryURL.appendingPathComponent("README.md")
-    return try! String(contentsOf: readmeURL, encoding: .utf8)
-}()
+private let projectDirectory = URL(fileURLWithPath: #file)
+    .deletingLastPathComponent().deletingLastPathComponent()
 
 class CommandLineTests: XCTestCase {
+    // MARK: stdin
 
-    // MARK: arg parser
-
-    func testParseSimpleArguments() {
-        let input = "hello world"
-        let output = ["", "hello", "world"]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseEscapedSpace() {
-        let input = "hello\\ world"
-        let output = ["", "hello world"]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseEscapedN() {
-        let input = "hello\\nworld"
-        let output = ["", "hellonworld"]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseQuoteArguments() {
-        let input = "\"hello world\""
-        let output = ["", "hello world"]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseEscapedQuote() {
-        let input = "hello \\\"world\\\""
-        let output = ["", "hello", "\"world\""]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseEscapedQuoteInString() {
-        let input = "\"hello \\\"world\\\"\""
-        let output = ["", "hello \"world\""]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    func testParseQuotedEscapedN() {
-        let input = "\"hello\\nworld\""
-        let output = ["", "hello\\nworld"]
-        XCTAssertEqual(parseArguments(input), output)
-    }
-
-    // MARK: arg preprocessor
-
-    func testPreprocessArguments() {
-        let input = ["", "foo", "bar", "-o", "baz", "-i", "4", "-l", "cr", "-s", "inline"]
-        let output = ["0": "", "1": "foo", "2": "bar", "output": "baz", "indent": "4", "linebreaks": "cr", "semicolons": "inline"]
-        XCTAssertEqual(try preprocessArguments(input, [
-            "output",
-            "indent",
-            "linebreaks",
-            "semicolons",
-        ]), output)
-    }
-
-    func testEmptyArgsAreRecognized() {
-        let input = ["", "--help", "--version"]
-        let output = ["0": "", "help": "", "version": ""]
-        XCTAssertEqual(try preprocessArguments(input, [
-            "help",
-            "version",
-        ]), output)
-    }
-
-    // MARK: format options to arguments
-
-    func testCommandLineArgumentsHaveValidNames() {
-        let arguments = commandLineArguments(for: FormatOptions())
-        for key in arguments.keys {
-            XCTAssertTrue(commandLineArguments.contains(key), "\(key) is not a valid argument name")
-        }
-    }
-
-    func testCommandLineArgumentsAreCorrect() {
-        let options = FormatOptions()
-        let output = ["allman": "false", "wraparguments": "disabled", "wrapelements": "beforefirst", "self": "remove", "header": "ignore", "binarygrouping": "4,8", "octalgrouping": "4,8", "patternlet": "hoist", "indentcase": "false", "trimwhitespace": "always", "decimalgrouping": "3,6", "commas": "always", "semicolons": "inline", "indent": "4", "exponentcase": "lowercase", "operatorfunc": "spaced", "elseposition": "same-line", "empty": "void", "ranges": "spaced", "hexliteralcase": "uppercase", "linebreaks": "lf", "hexgrouping": "4,8", "comments": "indent", "ifdef": "indent", "stripunusedargs": "always"]
-        XCTAssertEqual(commandLineArguments(for: options), output)
-    }
-
-    // MARK: format arguments to options
-
-    func testFormatArgumentsAreAllImplemented() {
-        CLI.print = { _, _ in }
-        for key in formatArguments {
-            guard let value = commandLineArguments(for: FormatOptions())[key] else {
-                XCTAssert(deprecatedArguments.contains(key))
-                continue
+    func testStdin() {
+        CLI.print = { message, type in
+            switch type {
+            case .raw, .content:
+                XCTAssertEqual(message, "func foo() {\n    bar()\n}\n")
+            case .error, .warning:
+                XCTFail()
+            case .info, .success:
+                break
             }
-            XCTAssert(!deprecatedArguments.contains(key))
-            do {
-                _ = try formatOptionsFor([key: value])
-            } catch {
-                XCTFail("\(error)")
-            }
-        }
-    }
-
-    func testFileHeaderYearReplacement() {
-        do {
-            let options = try formatOptionsFor(["header": " Copyright 1981 - {year}"])
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy"
-            let year = formatter.string(from: Date())
-            XCTAssertEqual(options.fileHeader, "//Copyright 1981 - \(year)")
-        } catch {
-            XCTFail("\(error)")
-        }
-    }
-
-    // MARK: pipe
-
-    func testPipe() {
-        CLI.print = { message, _ in
-            XCTAssertEqual(message, "func foo() {\n    bar()\n}\n")
         }
         var readCount = 0
         CLI.readLine = {
@@ -173,39 +65,24 @@ class CommandLineTests: XCTestCase {
                 return nil
             }
         }
-        processArguments([""], in: "")
-    }
-
-    // MARK: input paths
-
-    func testExpandPathWithRelativePath() {
-        XCTAssertEqual(
-            expandPath("relpath/to/file.swift", in: "/dir").path,
-            "/dir/relpath/to/file.swift"
-        )
-    }
-
-    func testExpandPathWithFullPath() {
-        XCTAssertEqual(
-            expandPath("/full/path/to/file.swift", in: "/dir").path,
-            "/full/path/to/file.swift"
-        )
-    }
-
-    func testExpandPathWithUserPath() {
-        XCTAssertEqual(
-            expandPath("~/file.swift", in: "/dir").path,
-            NSString(string: "~/file.swift").expandingTildeInPath
-        )
+        _ = processArguments([""], in: "")
+        readCount = 0
+        _ = processArguments(["", "stdin"], in: "")
     }
 
     // MARK: help
 
     func testHelpLineLength() {
         CLI.print = { message, _ in
-            XCTAssertLessThanOrEqual(message.count, 80, message)
+            message.components(separatedBy: "\n").forEach { line in
+                XCTAssertLessThanOrEqual(line.count, 80, line)
+            }
         }
-        printHelp()
+        printHelp(as: .content)
+        printOptions(as: .content)
+        for rule in FormatRules.all {
+            try! printRuleInfo(for: rule.name, as: .content)
+        }
     }
 
     func testHelpOptionsImplemented() {
@@ -215,59 +92,142 @@ class CommandLineTests: XCTestCase {
                 XCTAssertTrue(commandLineArguments.contains(name), name)
             }
         }
-        printHelp()
+        printHelp(as: .content)
     }
 
     func testHelpOptionsDocumented() {
-        var arguments = Set(commandLineArguments)
-        deprecatedArguments.forEach { arguments.remove($0) }
+        var arguments = Set(commandLineArguments).subtracting(deprecatedArguments)
+        CLI.print = { allHelpMessage, _ in
+            allHelpMessage
+                .components(separatedBy: "\n")
+                .forEach { message in
+                    if message.hasPrefix("--") {
+                        let name = String(message["--".endIndex ..< message.endIndex]).components(separatedBy: " ")[0]
+                        XCTAssert(arguments.contains(name), "Unknown option --\(name) in help")
+                        arguments.remove(name)
+                    }
+                }
+        }
+        printHelp(as: .content)
+        printOptions(as: .content)
+        XCTAssert(arguments.isEmpty, "\(arguments.joined(separator: ",")) not listed in help")
+    }
+
+    // MARK: cache
+
+    func testHashIsFasterThanFormatting() throws {
+        let sourceFile = URL(fileURLWithPath: #file)
+        let source = try String(contentsOf: sourceFile, encoding: .utf8)
+        let hash = computeHash(source + ";")
+
+        let hashTime = timeEvent { _ = computeHash(source) == hash }
+        let formatTime = try timeEvent { _ = try format(source) }
+        XCTAssertLessThan(hashTime, formatTime)
+    }
+
+    func testCacheHit() throws {
+        let input = "let foo = bar"
+        XCTAssertEqual(computeHash(input), computeHash(input))
+    }
+
+    func testCacheMiss() throws {
+        let input = "let foo = bar"
+        let output = "let foo = bar\n"
+        XCTAssertNotEqual(computeHash(input), computeHash(output))
+    }
+
+    func testCachePotentialFalsePositive() throws {
+        let input = "let foo = bar;"
+        let output = "let foo = bar\n"
+        XCTAssertNotEqual(computeHash(input), computeHash(output))
+    }
+
+    func testCachePotentialFalsePositive2() throws {
+        let input = """
+        import Foo
+        import Bar
+
+        """
+        let output = """
+        import Bar
+        import Foo
+
+        """
+        XCTAssertNotEqual(computeHash(input), computeHash(output))
+    }
+
+    // MARK: end-to-end formatting
+
+    func testFormatting() {
+        CLI.print = { _, _ in }
+        let args = ". --dryrun --disable redundantSelf"
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: args), .ok)
+    }
+
+    // MARK: rules
+
+    func testRulesNotMarkedAsDisabled() {
         CLI.print = { message, _ in
-            if message.hasPrefix("--") {
-                let name = String(message["--".endIndex ..< message.endIndex]).components(separatedBy: " ")[0]
-                arguments.remove(name)
-            }
+            XCTAssert(!message.contains("(disabled)") ||
+                FormatRules.disabledByDefault.contains(where: { message.contains($0) }))
         }
-        printHelp()
-        XCTAssert(arguments.isEmpty, "\(arguments.joined(separator: ","))")
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "--rules"), .ok)
     }
 
-    // MARK: documentation
+    // MARK: quiet mode
 
-    func testAllRulesInReadme() {
-        for ruleName in FormatRules.byName.keys {
-            XCTAssertTrue(readme.contains("***\(ruleName)*** - "), ruleName)
+    func testQuietModeNoOutput() {
+        CLI.print = { message, _ in
+            XCTFail(message)
         }
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "--quiet --dryrun"), .ok)
     }
 
-    func testNoInvalidRulesInReadme() {
-        let ruleNames = Set(FormatRules.byName.keys)
-        var range = readme.startIndex ..< readme.endIndex
-        while let match = readme.range(of: "\\*[a-zA-Z]+\\* - ", options: .regularExpression, range: range, locale: nil) {
-            let lower = readme.index(after: match.lowerBound)
-            let upper = readme.index(match.upperBound, offsetBy: -4)
-            let ruleName: String = String(readme[lower ..< upper])
-            XCTAssertTrue(ruleNames.contains(ruleName), ruleName)
-            range = match.upperBound ..< range.upperBound
+    func testQuietModeAllowsContent() {
+        CLI.print = { message, type in
+            XCTAssertEqual(type, .content, message)
         }
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "--quiet --help"), .ok)
     }
 
-    func testAllOptionsInReadme() {
-        var arguments = Set(formatArguments)
-        deprecatedArguments.forEach { arguments.remove($0) }
-        for argument in arguments {
-            XCTAssertTrue(readme.contains("`--\(argument)`"), argument)
+    func testQuietModeAllowsErrors() {
+        CLI.print = { message, type in
+            XCTAssertEqual(type, .error, message)
         }
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "foobar.swift --quiet"), .error)
     }
 
-    func testNoInvalidOptionsInReadme() {
-        let arguments = Set(commandLineArguments)
-        var range = readme.startIndex ..< readme.endIndex
-        while let match = readme.range(of: "`--[a-zA-Z]+`", options: .regularExpression, range: range, locale: nil) {
-            let lower = readme.index(match.lowerBound, offsetBy: 3)
-            let upper = readme.index(before: match.upperBound)
-            let argument: String = String(readme[lower ..< upper])
-            XCTAssertTrue(arguments.contains(argument), argument)
-            range = match.upperBound ..< range.upperBound
+    // MARK: split input paths
+
+    func testSplitInputPaths() {
+        CLI.print = { message, type in
+            XCTAssertEqual(type, .error, message)
         }
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "Sources --dryrun Tests --rules indent"), .error)
+    }
+
+    // MARK: file list
+
+    func testParseFileList() {
+        let source = """
+        #foo
+        foo.swift #bar
+
+        #baz
+        bar/baz.swift
+        """
+        XCTAssertEqual(parseFileList(source, in: projectDirectory.path), [
+            URL(fileURLWithPath: "\(projectDirectory.path)/foo.swift"),
+            URL(fileURLWithPath: "\(projectDirectory.path)/bar/baz.swift"),
+        ])
+    }
+
+    // MARK: snapshot/regression tests
+
+    func testRegressionSuite() {
+        CLI.print = { message, _ in
+            Swift.print(message)
+        }
+        XCTAssertEqual(CLI.run(in: projectDirectory.path, with: "Snapshots --unexclude Snapshots --symlinks follow --lint --cache ignore"), .ok)
     }
 }

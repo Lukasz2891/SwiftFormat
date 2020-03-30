@@ -30,6 +30,13 @@
 //
 
 import Foundation
+
+#if os(macOS)
+    import Darwin.POSIX
+#else
+    import Glibc
+#endif
+
 #if SWIFT_PACKAGE
     import SwiftFormat
 #endif
@@ -43,27 +50,33 @@ extension String {
 
 extension FileHandle: TextOutputStream {
     public func write(_ string: String) {
-        if let data = string.data(using: .utf8) {
-            write(data)
-        }
+        write(Data(string.utf8))
     }
 }
 
 private var stderr = FileHandle.standardError
 
+private let stderrIsTTY = isatty(STDERR_FILENO) != 0
+
+private let printQueue = DispatchQueue(label: "swiftformat.print")
+
 CLI.print = { message, type in
-    switch type {
-    case .info:
-        print(message.inDefault)
-    case .success:
-        print(message.inGreen)
-    case .error:
-        print(message.inRed, to: &stderr)
-    case .warning:
-        print(message.inYellow, to: &stderr)
-    case .content:
-        print(message)
+    printQueue.sync {
+        switch type {
+        case .info:
+            print(message, to: &stderr)
+        case .success:
+            print(stderrIsTTY ? message.inGreen : message, to: &stderr)
+        case .error:
+            print(stderrIsTTY ? message.inRed : message, to: &stderr)
+        case .warning:
+            print(stderrIsTTY ? message.inYellow : message, to: &stderr)
+        case .content:
+            print(message)
+        case .raw:
+            print(message, terminator: "")
+        }
     }
 }
 
-CLI.run(in: FileManager.default.currentDirectoryPath)
+exit(CLI.run(in: FileManager.default.currentDirectoryPath).rawValue)

@@ -2,7 +2,7 @@
 //  Formatter.swift
 //  SwiftFormat
 //
-//  Version 0.33.8
+//  Version 0.44.6
 //
 //  Created by Nick Lockwood on 12/08/2016.
 //  Copyright 2016 Nick Lockwood
@@ -42,29 +42,61 @@ import Foundation
 public class Formatter: NSObject {
     private var enumerationIndex = -1
     private var disabledCount = 0
+    private var disabledNext = 0
+    private var wasNextDirective = false
+
+    // Formatting range
+    public var range: Range<Int>?
 
     // Current rule, used for handling comment directives
-    var currentRule: String? {
-        didSet { disabledCount = 0 }
+    var currentRule: FormatRule? {
+        didSet {
+            disabledCount = 0
+            disabledNext = 0
+        }
     }
 
     // Is current rule enabled
-    var isEnabled: Bool { return disabledCount <= 0 }
+    var isEnabled: Bool {
+        guard range?.contains(enumerationIndex) != false else {
+            return false
+        }
+        return disabledCount + disabledNext <= 0
+    }
 
     // Process a comment token (which may contain directives)
     func processCommentBody(_ comment: String) {
-        guard let rule = currentRule, comment.hasPrefix("swiftformat:"),
-            let directive = ["disable", "enable"].first(where: { comment.hasPrefix("swiftformat:\($0)") }),
-            comment.range(of: "\\b\(rule)\\b", options: .regularExpression) != nil else {
+        let prefix = "swiftformat:"
+        guard let rule = currentRule, comment.hasPrefix(prefix),
+            let directive = ["disable", "enable"].first(where: { comment.hasPrefix("\(prefix)\($0)") }),
+            comment.range(of: "\\b(\(rule.name)|all)\\b", options: .regularExpression) != nil else {
             return
         }
+        wasNextDirective = comment.hasPrefix("\(prefix)\(directive):next")
         switch directive {
         case "disable":
-            disabledCount += 1
+            if wasNextDirective {
+                disabledNext = 1
+            } else {
+                disabledCount += 1
+            }
         case "enable":
-            disabledCount -= 1
+            if wasNextDirective {
+                disabledNext = -1
+            } else {
+                disabledCount -= 1
+            }
         default:
             preconditionFailure()
+        }
+    }
+
+    /// Process a linebreak (used to cancel disable/enable:next directive)
+    func processLinebreak() {
+        if wasNextDirective {
+            wasNextDirective = false
+        } else if disabledNext != 0 {
+            disabledNext = 0
         }
     }
 
@@ -72,27 +104,75 @@ public class Formatter: NSObject {
     public let options: FormatOptions
 
     /// The token array managed by the formatter (read-only)
-    public private(set) var tokens: [Token]
+    public private(set) var tokens: [Token] {
+        didSet {
+            cacheIndexOfLastSignificantKeywords = [Int?](repeating: -1, count: tokens.count)
+        }
+    }
+
+    /// The indexOfLastSignificantKeyword cache array
+    internal var cacheIndexOfLastSignificantKeywords = [Int?]()
 
     /// Create a new formatter instance from a token array
-    public init(_ tokens: [Token], options: FormatOptions = FormatOptions()) {
+    public init(_ tokens: [Token], options: FormatOptions = FormatOptions(),
+                trackChanges: Bool = false, range: Range<Int>? = nil) {
         self.tokens = tokens
         self.options = options
+        self.trackChanges = trackChanges
+        self.range = range
+        cacheIndexOfLastSignificantKeywords = [Int?](repeating: -1, count: tokens.count)
+    }
+
+    // MARK: changes made
+
+    /// Change record
+    public struct Change: Equatable, CustomStringConvertible {
+        public let line: Int
+        public let rule: FormatRule
+        public let filePath: String?
+
+        public var description: String {
+            let help = stripMarkdown(rule.help).replacingOccurrences(of: "\n", with: " ")
+            return "\(filePath ?? ""):\(line):1: warning: (\(rule.name)) \(help)"
+        }
+    }
+
+    /// Changes made
+    public var changes = [Change]()
+
+    /// Should formatter track changes?
+    public var trackChanges = false
+
+    private func trackChange(at index: Int) {
+        guard trackChanges, let rule = currentRule else { return }
+        changes.append(Change(
+            line: originalLine(at: index),
+            rule: rule,
+            filePath: options.fileInfo.filePath
+        ))
+    }
+
+    private func updateRange(at index: Int, delta: Int) {
+        guard let range = range, range.contains(index) else {
+            return
+        }
+        self.range = range.lowerBound ..< range.upperBound + delta
     }
 
     // MARK: access and mutation
 
     /// Returns the token at the specified index, or nil if index is invalid
     public func token(at index: Int) -> Token? {
-        guard index >= 0 && index < tokens.count else { return nil }
+        guard index >= 0, index < tokens.count else { return nil }
         return tokens[index]
     }
 
     /// Replaces the token at the specified index with one or more new tokens
     public func replaceToken(at index: Int, with tokens: Token...) {
-        if tokens.count == 0 {
+        if tokens.isEmpty {
             removeToken(at: index)
-        } else {
+        } else if tokens.count != 1 || tokens[0] != self.tokens[index] {
+            trackChange(at: index)
             self.tokens[index] = tokens[0]
             for (i, token) in tokens.dropFirst().enumerated() {
                 insertToken(token, at: index + i + 1)
@@ -102,8 +182,12 @@ public class Formatter: NSObject {
 
     /// Replaces the tokens in the specified range with new tokens
     public func replaceTokens(inRange range: Range<Int>, with tokens: [Token]) {
+        if range.count == tokens.count, ArraySlice(tokens) == self.tokens[range] {
+            return
+        }
         let max = min(range.count, tokens.count)
         for i in 0 ..< max {
+            trackChange(at: range.lowerBound + i)
             self.tokens[range.lowerBound + i] = tokens[i]
         }
         if range.count > max {
@@ -124,6 +208,8 @@ public class Formatter: NSObject {
 
     /// Removes the token at the specified index
     public func removeToken(at index: Int) {
+        trackChange(at: index)
+        updateRange(at: index, delta: -1)
         tokens.remove(at: index)
         if enumerationIndex >= index {
             enumerationIndex -= 1
@@ -142,12 +228,16 @@ public class Formatter: NSObject {
 
     /// Removes the last token
     public func removeLastToken() {
+        trackChange(at: tokens.endIndex - 1)
+        updateRange(at: tokens.endIndex - 1, delta: -1)
         tokens.removeLast()
     }
 
     /// Inserts an array of tokens at the specified index
     public func insertTokens(_ tokens: [Token], at index: Int) {
+        trackChange(at: index)
         for token in tokens.reversed() {
+            updateRange(at: index, delta: 1)
             self.tokens.insert(token, at: index)
         }
         if enumerationIndex >= index {
@@ -170,8 +260,13 @@ public class Formatter: NSObject {
         enumerationIndex = 0
         while enumerationIndex < tokens.count {
             let token = tokens[enumerationIndex]
-            if case let .commentBody(comment) = token {
+            switch token {
+            case let .commentBody(comment):
                 processCommentBody(comment)
+            case .linebreak:
+                processLinebreak()
+            default:
+                break
             }
             if isEnabled {
                 body(enumerationIndex, token) // May mutate enumerationIndex
@@ -202,18 +297,27 @@ public class Formatter: NSObject {
 
     // MARK: utilities
 
-    /// Returns the index of the next token at the current scope that matches the block
-    public func index(after index: Int, where matches: (Token) -> Bool) -> Int? {
-        guard index < tokens.count else { return nil }
+    /// Returns the index of the next token in the specified range that matches the block
+    public func index(in range: CountableRange<Int>, where matches: (Token) -> Bool) -> Int? {
+        let range = range.clamped(to: 0 ..< tokens.count)
         var scopeStack: [Token] = []
-        for i in index + 1 ..< tokens.count {
+        for i in range {
             let token = tokens[i]
+            // TODO: find a better way to deal with this special case
+            if token == .endOfScope("#endif") {
+                while let scope = scopeStack.last, scope != .startOfScope("#if") {
+                    scopeStack.removeLast()
+                }
+            }
             if let scope = scopeStack.last, token.isEndOfScope(scope) {
                 scopeStack.removeLast()
-                if case .linebreak = token, scopeStack.count == 0, matches(token) {
+                if case .linebreak = token, scopeStack.isEmpty, matches(token) {
                     return i
                 }
-            } else if scopeStack.count == 0 && matches(token) {
+            } else if token == .endOfScope("case") || token == .endOfScope("default"),
+                scopeStack.last == .startOfScope("#if") {
+                continue
+            } else if scopeStack.isEmpty, matches(token) {
                 return i
             } else if token.isEndOfScope {
                 return nil
@@ -224,9 +328,25 @@ public class Formatter: NSObject {
         return nil
     }
 
+    /// Returns the index of the next token at the current scope that matches the block
+    public func index(after index: Int, where matches: (Token) -> Bool) -> Int? {
+        guard index < tokens.count else { return nil }
+        return self.index(in: index + 1 ..< tokens.count, where: matches)
+    }
+
+    /// Returns the index of the next matching token in the specified range
+    public func index(of token: Token, in range: CountableRange<Int>) -> Int? {
+        return index(in: range, where: { $0 == token })
+    }
+
     /// Returns the index of the next matching token at the current scope
     public func index(of token: Token, after index: Int) -> Int? {
         return self.index(after: index, where: { $0 == token })
+    }
+
+    /// Returns the index of the next token in the specified range of the specified type
+    public func index(of type: TokenType, in range: CountableRange<Int>, if matches: (Token) -> Bool = { _ in true }) -> Int? {
+        return index(in: range, where: { $0.is(type) }).flatMap { matches(tokens[$0]) ? $0 : nil }
     }
 
     /// Returns the index of the next token at the current scope of the specified type
@@ -244,24 +364,31 @@ public class Formatter: NSObject {
         return self.index(of: type, after: index, if: matches).map { tokens[$0] }
     }
 
-    /// Returns the index of the previous token at the current scope that matches the block
-    public func index(before index: Int, where matches: (Token) -> Bool) -> Int? {
-        guard index > 0 else { return nil }
-        var linebreakEncountered = (token(at: index)?.isLinebreak == true)
+    /// Returns the next token in the specified range of the specified type
+    public func next(_ type: TokenType, in range: CountableRange<Int>, if matches: (Token) -> Bool = { _ in true }) -> Token? {
+        return index(of: type, in: range, if: matches).map { tokens[$0] }
+    }
+
+    /// Returns the index of the last token in the specified range that matches the block
+    public func lastIndex(in range: CountableRange<Int>, where matches: (Token) -> Bool) -> Int? {
+        let range = range.clamped(to: 0 ..< tokens.count)
+        var linebreakEncountered = false
         var scopeStack: [Token] = []
-        for i in (0 ..< index).reversed() {
+        for i in range.reversed() {
             let token = tokens[i]
             if case .startOfScope = token {
                 if let scope = scopeStack.last, scope.isEndOfScope(token) {
                     scopeStack.removeLast()
-                } else if token.string == "//" && linebreakEncountered {
+                } else if token.string == "//", linebreakEncountered {
                     linebreakEncountered = false
                 } else if matches(token) {
                     return i
+                } else if token.string == "//", self.token(at: range.upperBound)?.isLinebreak == true {
+                    continue
                 } else {
                     return nil
                 }
-            } else if scopeStack.count == 0 && matches(token) {
+            } else if scopeStack.isEmpty, matches(token) {
                 return i
             } else if case .linebreak = token {
                 linebreakEncountered = true
@@ -272,9 +399,25 @@ public class Formatter: NSObject {
         return nil
     }
 
+    /// Returns the index of the previous token at the current scope that matches the block
+    public func index(before index: Int, where matches: (Token) -> Bool) -> Int? {
+        guard index > 0 else { return nil }
+        return lastIndex(in: 0 ..< index, where: matches)
+    }
+
+    /// Returns the index of the last matching token in the specified range
+    public func lastIndex(of token: Token, in range: CountableRange<Int>) -> Int? {
+        return lastIndex(in: range, where: { $0 == token })
+    }
+
     /// Returns the index of the previous matching token at the current scope
     public func index(of token: Token, before index: Int) -> Int? {
         return self.index(before: index, where: { $0 == token })
+    }
+
+    /// Returns the index of the last token in the specified range of the specified type
+    public func lastIndex(of type: TokenType, in range: CountableRange<Int>, if matches: (Token) -> Bool = { _ in true }) -> Int? {
+        return lastIndex(in: range, where: { $0.is(type) }).flatMap { matches(tokens[$0]) ? $0 : nil }
     }
 
     /// Returns the index of the previous token at the current scope of the specified type
@@ -292,14 +435,48 @@ public class Formatter: NSObject {
         return self.index(of: type, before: index, if: matches).map { tokens[$0] }
     }
 
+    /// Returns the previous token in the specified range of the specified type
+    public func last(_ type: TokenType, in range: CountableRange<Int>, if matches: (Token) -> Bool = { _ in true }) -> Token? {
+        return lastIndex(of: type, in: range, if: matches).map { tokens[$0] }
+    }
+
+    /// Inserts a linebreak at the specified index
+    public func insertLinebreak(at index: Int) {
+        insertToken(linebreakToken(for: index), at: index)
+    }
+
+    /// Indicates if the given range contains any nontokens other than those allowed.
+    ///
+    /// - Note: The range does not need to include the given tokens to return `true`,
+    ///         it just can't include any unallowed tokens.
+    ///
+    /// - Parameters:
+    ///   - range: The range to check
+    ///   - allowedTokens: The only tokens allowed in the range
+    ///   - allowingWhitespaceAndComments:If spaces, linebreaks, and comments should also be allowed.
+    public func range(_ range: CountableRange<Int>,
+                      doesNotContainsTokensExcept allowedTokens: [Token],
+                      allowingWhitespaceAndComments: Bool) -> Bool {
+        let range = range.clamped(to: 0 ..< tokens.count)
+        for token in tokens[range] {
+            if allowedTokens.contains(token) ||
+                (allowingWhitespaceAndComments && token.isSpaceOrCommentOrLinebreak) {
+                continue
+            }
+            return false
+        }
+        return true
+    }
+
     /// Returns the starting token for the containing scope at the specified index
     public func currentScope(at index: Int) -> Token? {
         return last(.startOfScope, before: index)
     }
 
     /// Returns the index of the ending token for the current scope
+    // TODO: should this return the closing `}` for `switch { ...` instead of nested `case`?
     public func endOfScope(at index: Int) -> Int? {
-        let startIndex: Int
+        var startIndex: Int
         guard var startToken = token(at: index) else { return nil }
         if case .startOfScope = startToken {
             startIndex = index
@@ -309,29 +486,21 @@ public class Formatter: NSObject {
         } else {
             return nil
         }
-        return self.index(after: startIndex) {
+        guard startToken == .startOfScope("{") else {
+            return self.index(after: startIndex, where: {
+                $0.isEndOfScope(startToken)
+            })
+        }
+        while let endIndex = self.index(after: startIndex, where: {
             $0.isEndOfScope(startToken)
-        }
-    }
-
-    /// Returns the index of the first token of the line containing the specified index
-    public func startOfLine(at index: Int) -> Int {
-        var index = index
-        while let token = token(at: index - 1) {
-            if case .linebreak = token {
-                break
+        }), let token = token(at: endIndex) {
+            if token == .endOfScope("}") {
+                return endIndex
             }
-            index -= 1
+            startIndex = endIndex
+            startToken = token
         }
-        return index
-    }
-
-    /// Returns the space at the start of the line containing the specified index
-    public func indentForLine(at index: Int) -> String {
-        if let token = token(at: startOfLine(at: index)), case let .space(string) = token {
-            return string
-        }
-        return ""
+        return nil
     }
 
     /// Either modifies or removes the existing space token at the specified
@@ -349,5 +518,127 @@ public class Formatter: NSObject {
             return 1 // Inserted 1 token
         }
         return 0 // Inserted 0 tokens
+    }
+
+    /// Returns the original line number at the specified index
+    public func originalLine(at index: Int) -> OriginalLine {
+        for token in tokens[0 ..< index].reversed() {
+            if case let .linebreak(_, line) = token {
+                return line + 1
+            }
+        }
+        return 1
+    }
+
+    /// Returns a linebreak token suitable for insertion at the specified index
+    public func linebreakToken(for index: Int) -> Token {
+        let lineNumber: Int
+        if case let .linebreak(_, index)? = token(at: index) {
+            lineNumber = index
+        } else {
+            lineNumber = originalLine(at: index)
+        }
+        return .linebreak(options.linebreak, lineNumber)
+    }
+
+    /// Returns the index where the `wrap` rule should add the next linebreak in the line at the selected index.
+    ///
+    /// If the line does not need to be wrapped, this will return `nil`.
+    ///
+    /// - Note: This checks the entire line from the start of the line, the linebreak may be an index preceding the
+    ///         `index` passed to the function.
+    func indexWhereLineShouldWrapInLine(at index: Int) -> Int? {
+        return indexWhereLineShouldWrap(from: startOfLine(at: index))
+    }
+
+    func indexWhereLineShouldWrap(from index: Int) -> Int? {
+        var lineLength = self.lineLength(upTo: index)
+        var stringLiteralDepth = 0
+        var currentPriority = 0
+        var lastBreakPoint: Int?
+        var lastBreakPointPriority = Int.min
+
+        let maxWidth = options.maxWidth
+        guard maxWidth > 0 else { return nil }
+
+        func addBreakPoint(at i: Int, relativePriority: Int) {
+            guard stringLiteralDepth == 0, currentPriority + relativePriority >= lastBreakPointPriority,
+                !isInClosureArguments(at: i + 1) else {
+                return
+            }
+            let i = self.index(of: .nonSpace, before: i + 1) ?? i
+            if token(at: i + 1)?.isLinebreak == true || token(at: i)?.isLinebreak == true {
+                return
+            }
+            lastBreakPoint = i
+            lastBreakPointPriority = currentPriority + relativePriority
+        }
+
+        let tokens = self.tokens[index ..< endOfLine(at: index)]
+        for (i, token) in zip(tokens.indices, tokens) {
+            switch token {
+            case .linebreak:
+                return nil
+            case .delimiter(","):
+                addBreakPoint(at: i, relativePriority: 0)
+            case .operator("=", .infix) where self.token(at: i + 1)?.isSpace == true:
+                addBreakPoint(at: i, relativePriority: -9)
+            case .operator(".", .infix):
+                addBreakPoint(at: i - 1, relativePriority: -2)
+            case .operator("->", .infix):
+                if isInReturnType(at: i) {
+                    currentPriority -= 5
+                }
+                addBreakPoint(at: i - 1, relativePriority: -5)
+            case .operator(_, .infix) where self.token(at: i + 1)?.isSpace == true:
+                addBreakPoint(at: i, relativePriority: -3)
+            case .startOfScope("{"):
+                if !isStartOfClosure(at: i) ||
+                    next(.keyword, after: i) != .keyword("in"),
+                    next(.nonSpace, after: i) != .endOfScope("}") {
+                    addBreakPoint(at: i, relativePriority: -6)
+                }
+                if isInReturnType(at: i) {
+                    currentPriority += 5
+                }
+                currentPriority -= 6
+            case .endOfScope("}"):
+                currentPriority += 6
+                if last(.nonSpace, before: i) != .startOfScope("{") {
+                    addBreakPoint(at: i - 1, relativePriority: -6)
+                }
+            case .startOfScope("("):
+                currentPriority -= 7
+            case .endOfScope(")"):
+                currentPriority += 7
+            case .startOfScope("["):
+                currentPriority -= 8
+            case .endOfScope("]"):
+                currentPriority += 8
+            case .startOfScope("<"):
+                currentPriority -= 9
+            case .endOfScope(">"):
+                currentPriority += 9
+            case .startOfScope where token.isStringDelimiter:
+                stringLiteralDepth += 1
+            case .endOfScope where token.isStringDelimiter:
+                stringLiteralDepth -= 1
+            case .keyword("else"), .keyword("where"):
+                addBreakPoint(at: i - 1, relativePriority: -1)
+            case .keyword("in"):
+                if last(.keyword, before: i) == .keyword("for") {
+                    addBreakPoint(at: i, relativePriority: -11)
+                    break
+                }
+                addBreakPoint(at: i, relativePriority: -5 - currentPriority)
+            default:
+                break
+            }
+            lineLength += tokenLength(token)
+            if lineLength > maxWidth, let breakPoint = lastBreakPoint, breakPoint < i {
+                return breakPoint
+            }
+        }
+        return nil
     }
 }
