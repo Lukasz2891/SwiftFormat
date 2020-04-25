@@ -1743,7 +1743,10 @@ public struct _FormatRules {
                     }
                     fallthrough
                 }
-                if let index = formatter.index(of: .identifier("_"), in: i + 1 ..< closingIndex),
+                if formatter.tokens[i + 1 ..< closingIndex].contains(.identifier("self")) {
+                    return
+                }
+                if let index = formatter.tokens[i + 1 ..< closingIndex].index(of: .identifier("_")),
                     formatter.next(.nonSpaceOrComment, after: index)?.isIdentifier == true {
                     return
                 }
