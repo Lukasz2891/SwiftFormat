@@ -70,6 +70,9 @@ public final class FormatRule: Equatable, Comparable {
     }
 
     public static func < (lhs: FormatRule, rhs: FormatRule) -> Bool {
+        if lhs.orderAfter.contains(rhs.name) {
+            return false
+        }
         return rhs.orderAfter.contains(lhs.name) || lhs.name < rhs.name
     }
 
