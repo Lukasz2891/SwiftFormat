@@ -1037,6 +1037,9 @@ public struct _FormatRules {
                     case .outdent:
                         i += formatter.insertSpace("", at: formatter.startOfLine(at: i))
                     }
+                case _ where token.isStringDelimiter, "//":
+                    // Note: multiline string literals not-indented
+                    break
                 case "[", "(":
                     guard let linebreakIndex = formatter.index(of: .linebreak, after: i),
                         let nextIndex = formatter.index(of: .nonSpace, after: i),
@@ -1052,10 +1055,6 @@ public struct _FormatRules {
                     indentCount = 1
                     indent = formatter.spaceEquivalentToTokens(from: start, upTo: nextIndex)
                 default:
-                    if token.isMultilineStringDelimiter {
-                        // Don't indent multiline string literals
-                        break
-                    }
                     let stringIndent = stringBodyIndent(at: i)
                     stringBodyIndentStack[stringBodyIndentStack.count - 1] = stringIndent
                     indent += stringIndent + formatter.options.indent
