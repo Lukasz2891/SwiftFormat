@@ -1651,7 +1651,8 @@ class RulesTests: XCTestCase {
         let input = "if case .foo = foo,\ntrue {\nreturn false\n}"
         let output = "if case .foo = foo,\n    true {\n    return false\n}"
         let options = FormatOptions(xcodeIndentation: true)
-        testFormatting(for: input, output, rule: FormatRules.indent, options: options)
+        testFormatting(for: input, output, rule: FormatRules.indent,
+                       options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testGenericEnumCaseIndenting() {
@@ -2029,7 +2030,7 @@ class RulesTests: XCTestCase {
         let input = "guard let foo = bar\nelse { return }"
         let output = "guard let foo = bar\n    else { return }"
         let options = FormatOptions(xcodeIndentation: true)
-        testFormatting(for: input, output, rule: FormatRules.indent, options: options)
+        testFormatting(for: input, output, rule: FormatRules.indent, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrappedLineAfterGuardElseWithXcodeStyleNotIndented() {
@@ -2042,7 +2043,7 @@ class RulesTests: XCTestCase {
         let input = "guard let foo = foo\nelse {\nreturn\n}"
         let output = "guard let foo = foo\n    else {\n        return\n}"
         let options = FormatOptions(xcodeIndentation: true)
-        testFormatting(for: input, output, rule: FormatRules.indent, options: options)
+        testFormatting(for: input, output, rule: FormatRules.indent, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrappedLineAfterGuardCommaIndented() {
@@ -2056,14 +2057,14 @@ class RulesTests: XCTestCase {
         let input = "guard let foo = bar(baz, completion: {\nfalse\n}) else { return }"
         let output = "guard let foo = bar(baz, completion: {\n    false\n}) else { return }"
         let options = FormatOptions(xcodeIndentation: true)
-        testFormatting(for: input, output, rule: FormatRules.indent, options: options)
+        testFormatting(for: input, output, rule: FormatRules.indent, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testNestedScopesForXcodeGuardIndentation() {
         let input = "enum Foo {\ncase bar\n\nvar foo: String {\nguard self == .bar\nelse {\nreturn \"\"\n}\nreturn \"bar\"\n}\n}"
         let output = "enum Foo {\n    case bar\n\n    var foo: String {\n        guard self == .bar\n            else {\n                return \"\"\n        }\n        return \"bar\"\n    }\n}"
         let options = FormatOptions(xcodeIndentation: true)
-        testFormatting(for: input, output, rule: FormatRules.indent, options: options)
+        testFormatting(for: input, output, rule: FormatRules.indent, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrappedLineAfterGuardElse() {
@@ -2091,7 +2092,7 @@ class RulesTests: XCTestCase {
                 let bar = bar else { break }
         }
         """
-        testFormatting(for: input, rule: FormatRules.indent)
+        testFormatting(for: input, rule: FormatRules.indent, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testConsecutiveWraps() {
@@ -2160,7 +2161,7 @@ class RulesTests: XCTestCase {
     func testNestedWrappedIfIndents() {
         let input = "if foo {\nif bar &&\n(baz ||\nquux) {\nfoo()\n}\n}"
         let output = "if foo {\n    if bar &&\n        (baz ||\n            quux) {\n        foo()\n    }\n}"
-        testFormatting(for: input, output, rule: FormatRules.indent, exclude: ["andOperator"])
+        testFormatting(for: input, output, rule: FormatRules.indent, exclude: ["andOperator", "wrapMultilineStatementBraces"])
     }
 
     func testWrappedEnumThatLooksLikeIf() {
@@ -2260,7 +2261,7 @@ class RulesTests: XCTestCase {
     func testIndentInsideWrappedIfStatementWithClosureCondition() {
         let input = "if foo({ 1 }) ||\nbar {\nbaz()\n}"
         let output = "if foo({ 1 }) ||\n    bar {\n    baz()\n}"
-        testFormatting(for: input, output, rule: FormatRules.indent)
+        testFormatting(for: input, output, rule: FormatRules.indent, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testIndentInsideWrappedClassDefinition() {
@@ -7987,7 +7988,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 20)
-        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options)
+        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapClosure() {
@@ -8058,7 +8059,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 25)
-        testFormatting(for: input, output, rule: FormatRules.wrap, options: options)
+        testFormatting(for: input, output, rule: FormatRules.wrap, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidthWithXcodeIndentation() {
@@ -8083,7 +8084,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(xcodeIndentation: true, maxWidth: 25)
-        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options)
+        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth2() {
@@ -8099,7 +8100,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 35)
-        testFormatting(for: input, output, rule: FormatRules.wrap, options: options)
+        testFormatting(for: input, output, rule: FormatRules.wrap, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth2WithXcodeIndentation() {
@@ -8121,7 +8122,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(xcodeIndentation: true, maxWidth: 35)
-        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options)
+        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth3() {
@@ -8137,7 +8138,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 35)
-        testFormatting(for: input, output, rule: FormatRules.wrap, options: options)
+        testFormatting(for: input, output, rule: FormatRules.wrap, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth3WithXcodeIndentation() {
@@ -8159,7 +8160,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(xcodeIndentation: true, maxWidth: 35)
-        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options)
+        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth4() {
@@ -8175,7 +8176,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 35)
-        testFormatting(for: input, output, rule: FormatRules.wrap, options: options)
+        testFormatting(for: input, output, rule: FormatRules.wrap, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapFunctionIfReturnTypeExceedsMaxWidth4WithXcodeIndentation() {
@@ -8197,7 +8198,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(xcodeIndentation: true, maxWidth: 35)
-        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options)
+        testFormatting(for: input, [output, output2], rules: [FormatRules.wrap], options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testWrapChainedFunctionAfterSubscriptCollection() {
@@ -8237,7 +8238,7 @@ class RulesTests: XCTestCase {
         }
         """
         let options = FormatOptions(maxWidth: 42)
-        testFormatting(for: input, output, rule: FormatRules.wrap, options: options)
+        testFormatting(for: input, output, rule: FormatRules.wrap, options: options, exclude: ["wrapMultilineStatementBraces"])
     }
 
     func testNoWrapInterpolatedStringLiteral() {
@@ -11714,205 +11715,110 @@ class RulesTests: XCTestCase {
         testFormatting(for: input, output, rule: FormatRules.leadingDelimiters)
     }
 
-    func testStStRedundantOneLineVarReturn() {
+    // MARK: wrapMultilineStatementBraces
+
+    func testMultilineIfBraceOnNextLine() {
         let input = """
-        var something: Int {
-
-            return 5
-
-        }
-
-        var somethingElse: Int {
-            return 6
-
+        if firstConditional,
+            array.contains(where: { secondConditional }) {
+            print("statement body")
         }
         """
         let output = """
-        var something: Int { 5 }
-
-        var somethingElse: Int { 6 }
-        """
-
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantOneLineVarReturn], options: .default), output)
-    }
-
-    func testStStRedundantOneLineVarReturnInsideFunctionNoChange() {
-        let input = """
-        var offset: CGFloat = 0
-
-        if subviews.isEmpty {
-            return offset
-        }
-        """
-        let output = input
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantOneLineVarReturn, FormatRules.consecutiveSpaces], options: options), output)
-    }
-
-    func testStstLinebreakAfterGuard() {
-        let input = """
-        guard let something = something else { return }
-        Aaaa()
-        """
-        let output = """
-        guard let something = something else { return }
-
-        Aaaa()
-        """
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
-    }
-
-    func testStstLinebreakAfterGuardNoChange() {
-        let input = """
-        guard let something = something else { return }
-
-        Aaaa()
-        """
-        let output = input
-        let options = FormatOptions(removeBlankLines: true)
-
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
-    }
-
-    func testStstLinebreakAfterGuardAtTheEndNoChange() {
-        let input = """
+        if firstConditional,
+            array.contains(where: { secondConditional })
         {
-            guard let something = something else { return }
-            }
-        """
-        let output = input
-        let options = FormatOptions(removeBlankLines: true)
-
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterGuard], options: options), output)
-    }
-
-    func testStstLinebreakBeforeReturn() {
-        let input = """
-        guard let something = something else { return }
-        return Aaaa()
-        """
-        let output = """
-        guard let something = something else { return }
-
-        return Aaaa()
-        """
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
-    }
-
-    func testStstLinebreakBeforeReturnNoChange() {
-        let input = """
-        guard let something = something else { return }
-
-        return Aaaa()
-        """
-        let output = input
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
-    }
-
-    func testStstLinebreakBeforeReturnSingleLinesNoChange() {
-        let input = """
-        if expression {
-            return iPhoneValue
-        } else {
-            return iPadValue
+            print("statement body")
         }
         """
-        let output = input
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakBeforeReturn], options: options), output)
+        testFormatting(for: input, output, rule: FormatRules.wrapMultilineStatementBraces, exclude: ["braces"])
     }
 
-    func testStstRedundantTypeNameBool() {
-        let input = "var something: Bool = true"
-        let output = "var something = true"
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-
-    func testStstRedundantTypeNameString() {
-        let input = "var something: String = \"value\" "
-        let output = "var something = \"value\" "
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-
-    func testStstRedundantTypeNameStatic() {
-        let input = "var something: Type = Type.make()!"
-        let output = "var something = Type.make()!"
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-
-    func testStstRedundantTypeName() {
-        let input = "var something: Type = Type(value: 5)"
-        let output = "var something = Type(value: 5)"
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-    
-    func testStstRedundantTypeNameCGFloat() {
-        let input = "var something: CGFloat = CGFloat(apply(233))"
-        let output = "var something: CGFloat = apply(233)"
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-
-    func testStstRedundantTypeNameEnum() {
-        let input = "var something: UIColor = UIColor.red"
-        let output = "var something = UIColor.red"
-
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), output)
-    }
-
-    func testStstRedundantTypeNameInsideFunArgsNoChange() {
-         let input = "func doSomething(with test: Bool = true)"
-
-         let options = FormatOptions(removeBlankLines: true)
-         XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), input)
-     }
-
-    func testStstRedundantTypeNameFailableInitNoChange() {
-         let input = "let image: UIImage = UIImage(named: \"aaa\")!"
-
-         let options = FormatOptions(removeBlankLines: true)
-         XCTAssertEqual(try format(input, rules: [FormatRules.ststRedundantTypeName], options: options), input)
-     }
-
-    func testStstLinebreakAfterClass() {
+    func testMultilineFuncBraceOnNextLine() {
         let input = """
-        class StepBaseView<ContentView: UIView>: SCBaseView, SingleStepView {
-            private struct Constants {
-                let backgroundColor = UIColor.white
-                let horizontalMargin: CGFloat = 16
+        func method(
+            foo: Int,
+            bar: Int) {
+            print("function body")
+        }
+        """
+        let output = """
+        func method(
+            foo: Int,
+            bar: Int)
+        {
+            print("function body")
+        }
+        """
+        testFormatting(for: input, output, rule: FormatRules.wrapMultilineStatementBraces,
+                       exclude: ["braces", "wrapArguments", "unusedArguments"])
+    }
+
+    func testMultilineGuardBraceOnNextLine() {
+        let input = """
+        guard firstConditional,
+            array.contains(where: { secondConditional }) else {
+            print("statement body")
+        }
+        """
+        let output = """
+        guard firstConditional,
+            array.contains(where: { secondConditional }) else
+        {
+            print("statement body")
+        }
+        """
+        testFormatting(for: input, output, rule: FormatRules.wrapMultilineStatementBraces, exclude: ["braces"])
+    }
+
+    func testInnerMultilineIfBraceOnNextLine() {
+        let input = """
+        if outerConditional {
+            if firstConditional,
+                array.contains(where: { secondConditional }) {
+                print("statement body")
             }
         }
         """
         let output = """
-        class StepBaseView<ContentView: UIView>: SCBaseView, SingleStepView {
-
-            private struct Constants {
-
-                let backgroundColor = UIColor.white
-                let horizontalMargin: CGFloat = 16
+        if outerConditional {
+            if firstConditional,
+                array.contains(where: { secondConditional })
+            {
+                print("statement body")
             }
         }
         """
+        testFormatting(for: input, output, rule: FormatRules.wrapMultilineStatementBraces, exclude: ["braces"])
+    }
 
-        let options = FormatOptions(removeBlankLines: true)
-        XCTAssertEqual(try format(input, rules: [FormatRules.ststLinebreakAfterClassExtensionStruct], options: options), output)
+    func testMultilineIfBraceOnSameLine() {
+        let input = """
+        if let object = Object([
+            foo,
+            bar,
+        ]) {
+            print("statement body")
+        }
+        """
+        testFormatting(for: input, rule: FormatRules.wrapMultilineStatementBraces)
+    }
+
+    func testSingleLineIfBraceOnSameLine() {
+        let input = """
+        if firstConditional {
+            print("statement body")
+        }
+        """
+        testFormatting(for: input, rule: FormatRules.wrapMultilineStatementBraces)
+    }
+
+    func testSingleLineGuardBraceOnSameLine() {
+        let input = """
+        guard firstConditional else {
+            print("statement body")
+        }
+        """
+        testFormatting(for: input, rule: FormatRules.wrapMultilineStatementBraces)
     }
 }
