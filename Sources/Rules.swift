@@ -1185,15 +1185,6 @@ public struct _FormatRules {
                         }
                         let stringIndent = stringBodyIndentStack.last!
                         i += formatter.insertSpace(stringIndent + indent, at: start)
-//                        if firstToken.isMultilineStringDelimiter,
-//                            let startOfString = formatter.index(of: .startOfScope, before: start) {
-//                            var j = start - 1
-//                            while j > startOfString {
-//                                let start = formatter.startOfLine(at: j)
-//                                i += formatter.insertSpace(stringIndent + indent, at: start)
-//                                j = start - 1
-//                            }
-//                        }
                     }
                 } else if token == .endOfScope("#endif"), indentStack.count > 1 {
                     var indent = indentStack[indentStack.count - 2]
@@ -1383,10 +1374,6 @@ public struct _FormatRules {
                             break
                         }
                     }
-//                case .stringBody:
-//                    // String body indent is determined retrospectively once
-//                    // the closing string delimiter is reached
-//                    break
                 default:
                     formatter.insertSpace(indent, at: i + 1)
                 }
