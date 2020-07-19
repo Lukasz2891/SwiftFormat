@@ -4386,205 +4386,82 @@ public struct _FormatRules {
         }
     }
 
-    public let ststLinebreakAfterClassExtensionStruct = FormatRule(orderAfter: ststOrderAfter + ["blankLinesAtStartOfScope"], _ststLinebreakAfterClassExtensionStruct)
-    public let ststLinebreakAtTheBeginning = FormatRule(orderAfter: ststOrderAfter + ["blankLinesAtStartOfScope"], _ststLinebreakAtTheBeginning)
-    public let ststLinebreakAfterSuper = FormatRule(orderAfter: ststOrderAfter, _ststLinebreakAfterSuper)
-    public let ststLinebreakAfterGuard = FormatRule(orderAfter: ststOrderAfter, _ststLinebreakAfterGuard)
-    public let ststLinebreakBeforeReturn = FormatRule(orderAfter: ststOrderAfter + ["ststLinebreakAfterGuard", "ststLinebreakAfterSuper"], _ststLinebreakBeforeReturn)
-
-    public let ststRedundantOneLineVarReturn = FormatRule(orderAfter: ststOrderAfter + ["consecutiveSpaces"], _ststRedundantOneLineVarReturn)
-    public let ststRedundantTypeName = FormatRule(orderAfter: ststOrderAfter + ["ststRedundantTypeNameInverted"], _ststRedundantTypeName)
-
-    private static let ststOrderAfter = ["wrap", "wrapArguments"]
-    private static let ststLinebreakRules = ["ststLinebreakAtTheBeginning", "ststLinebreakAfterGuard", "ststLinebreakAfterSuper", "ststLinebreakBeforeReturn", "ststLinebreakAfterClassExtensionStruct"]
-}
-
-private extension _FormatRules {
-    /// Linebreak after class, extension or struct
-    static func _ststLinebreakAfterClassExtensionStruct(_ formatter: Formatter) {
-        guard formatter.options.removeBlankLines else { return }
-
-        formatter.forEach(.keyword) { i, token in
-            guard ["class", "extension", "struct"].contains(token.string),
-                let classNameIndex = formatter.index(of: .identifier, after: i),
-                let startOfScopeIndex = formatter.index(of: .startOfScope("{"), after: i) else {
+    /// Strip header comments from the file
+    public let attributes = FormatRule(
+        help: "Wrap @ attrubutes onto a separate line, or keep them on the same line.",
+        options: ["funcattributes", "typeattributes"],
+        sharedOptions: ["linebreaks"]
+    ) { formatter in
+        formatter.forEach(.identifierOrKeyword) { i, _ in
+            guard
+                formatter.token(at: i)?.string.starts(with: "@") == true,
+                let nextOpenBracket = formatter.index(of: .startOfScope("{"), after: i) else {
                 return
             }
 
-            // For cases like "protocol FooBar: class {}"
-            if token.string == "class" && classNameIndex >= startOfScopeIndex {
+            // Check the declaration for func or class/struct/enum to determine
+            // which `AttributesMode` option to use.
+            let rangeToNextOpenBracket = CountableRange<Int>(i ... nextOpenBracket)
+            let attributeMode: AttributeMode
+            let keywordIndex: Int
+
+            if let funcKeyworkIndex = formatter.index(of: .keyword("func"), in: rangeToNextOpenBracket) {
+                attributeMode = formatter.options.funcAttributes
+                keywordIndex = funcKeyworkIndex
+            } else if let typeKeywordIndex = formatter.index(of: .keyword("class"), in: rangeToNextOpenBracket)
+                ?? formatter.index(of: .keyword("struct"), in: rangeToNextOpenBracket)
+                ?? formatter.index(of: .keyword("enum"), in: rangeToNextOpenBracket)
+                ?? formatter.index(of: .keyword("protocol"), in: rangeToNextOpenBracket) {
+                attributeMode = formatter.options.typeAttributes
+                keywordIndex = typeKeywordIndex
+            } else {
                 return
             }
 
-            // For class' fields or methods
-            if token.string == "class" {
-                for index in i + 1 ..< startOfScopeIndex {
-                    let tempToken = formatter.tokens[index]
-                    if ["func", "let", "var"].contains(tempToken.string) {
-                        return
+            // Make sure we don't accidentially wrap import or var/let annotations
+            let rangeUpToKeyword = CountableRange<Int>(i ... keywordIndex)
+            if (formatter.index(of: .keyword("import"), in: rangeToNextOpenBracket)
+                ?? formatter.index(of: .keyword("let"), in: rangeToNextOpenBracket)
+                ?? formatter.index(of: .keyword("var"), in: rangeToNextOpenBracket)) != nil {
+                return
+            }
+
+            // Determine the end index of the attrubute
+            //  - Attributes like `@objc` are single tokens,
+            //    but attributes like `@available(iOS 14.0, *)` are multiple tokens.
+            let attributeEndIndex: Int
+            if let argumentStartIndex = formatter.index(of: .nonSpaceOrComment, after: i),
+                formatter.token(at: argumentStartIndex) == .startOfScope("("),
+                let endOfArgumentScope = formatter.endOfScope(at: argumentStartIndex) {
+                attributeEndIndex = endOfArgumentScope
+            } else {
+                attributeEndIndex = i
+            }
+
+            // Apply the `AttributeMode`
+            switch attributeMode {
+            case .preserve:
+                return
+            case .newLine:
+                // Make sure there's a newline immediately following the attribute
+                if let nextTokenIndex = formatter.index(of: .nonSpaceOrComment, after: attributeEndIndex),
+                    formatter.token(at: nextTokenIndex)?.isLinebreak != true {
+                    formatter.insertLinebreak(at: nextTokenIndex)
+                    // Remove any trailing whitespace left on the line with the attributes
+                    if let previousToken = formatter.token(at: nextTokenIndex - 1),
+                        previousToken.isSpace {
+                        formatter.removeToken(at: nextTokenIndex - 1)
                     }
                 }
+            case .sameLine:
+                // Make sure there _isn't_ a newline immediately following the attributes
+                if let nextTokenIndex = formatter.index(of: .nonSpaceOrComment, after: attributeEndIndex),
+                    formatter.token(at: nextTokenIndex)?.isLinebreak != false {
+                    // Replace the newline with a space so the attribute doesn't
+                    // merge with the next token.
+                    formatter.replaceToken(at: nextTokenIndex, with: .space(" "))
+                }
             }
-
-            insertOneLinebreak(formatter, after: startOfScopeIndex)
         }
-    }
-
-    /// Linebreak after guard
-    static func _ststLinebreakAfterGuard(_ formatter: Formatter) {
-        guard formatter.options.removeBlankLines else { return }
-
-        formatter.forEach(.keyword("guard")) { i, token in
-            guard let startOfScopeIndex = formatter.index(of: .startOfScope("{"), after: i),
-                let endOfScopeIndex = formatter.index(of: .endOfScope("}"), after: startOfScopeIndex + 1)
-            else { return }
-
-            insertOneLinebreak(formatter, after: endOfScopeIndex)
-        }
-    }
-
-    /// Linebreak after super
-    static func _ststLinebreakAfterSuper(_ formatter: Formatter) {
-        guard formatter.options.removeBlankLines else { return }
-
-        formatter.forEach(.identifier) { i, token in
-            guard ["super"].contains(token.string),
-                let lineBreakAfterTokenIndex = formatter.index(of: .linebreak, after: i)
-            else { return }
-
-            insertOneLinebreak(formatter, after: lineBreakAfterTokenIndex - 1)
-        }
-    }
-
-    /// Linebreak before return
-    static func _ststLinebreakBeforeReturn(_ formatter: Formatter) {
-        guard formatter.options.removeBlankLines else { return }
-
-        formatter.forEach(.keyword("return")) { i, token in
-            insertOneLinebreak(formatter, before: i)
-        }
-    }
-
-    /// Linebreak at the beginning of a file
-    static func _ststLinebreakAtTheBeginning(_ formatter: Formatter) {
-        guard formatter.tokens[0].isLinebreak == false else { return }
-
-        formatter.insertLinebreak(at: 0)
-    }
-
-    /// Remove redundant return in one-line computed variables
-    static func _ststRedundantOneLineVarReturn(_ formatter: Formatter) {
-        formatter.forEach(.keyword("var")) { i, token in
-            guard
-                let startIndex = formatter.index(of: .startOfScope("{"), after: i),
-                formatter.last(.keyword, before: startIndex) == token,
-                let returnToken = formatter.next(.keyword, after: startIndex),
-                returnToken.string == "return",
-                let returnIndex = formatter.index(of: .keyword("return"), after: startIndex),
-                let nonSpaceIndex = formatter.index(of: .nonSpaceOrCommentOrLinebreak, after: returnIndex)
-                else { return }
-
-            formatter.removeTokens(inRange: returnIndex ..< nonSpaceIndex)
-            formatter.removeTokens(inRange: startIndex + 1 ..< returnIndex)
-            formatter.insertSpace(" ", at: startIndex + 1)
-            
-            guard let endIndex = formatter.endOfScope(at: startIndex) else { return }
-
-            var eols: [Int] = []
-
-            var tmpStartIndex = startIndex
-
-            while let eolIndex = formatter.index(of: .linebreak, after: tmpStartIndex), i < endIndex {
-                eols.append(eolIndex)
-                tmpStartIndex = eolIndex
-            }
-
-            eols.reversed().forEach(formatter.removeToken)
-
-            guard let newEndIndex = formatter.index(of: .endOfScope("}"), after: startIndex),
-                let lastToken = formatter.lastToken(before: newEndIndex, where: { _ in true }),
-                lastToken.isSpace == false else { return }
-
-            formatter.insertToken(.space(" "), at: newEndIndex)
-        }
-    }
-
-    static func _ststRedundantTypeName(_ formatter: Formatter) {
-        formatter.forEach(.identifier) { i, token in
-            guard formatter.last(.startOfScope, before: i)?.string != "(",
-                let nextToken = formatter.next(.nonSpaceOrCommentOrLinebreak, after: i),
-                [.operator("=", .infix)].contains(nextToken),
-                let operatorIndex = formatter.index(of: nextToken, after: i),
-                let valueToken = formatter.next(.nonSpaceOrComment, after: operatorIndex),
-                let valueTokenIndex = formatter.index(of: valueToken, after: operatorIndex),
-                determines(valueToken, for: token),
-                let colonToken = formatter.last(.nonSpaceOrCommentOrLinebreak, before: i),
-                [.delimiter(":")].contains(colonToken),
-                let colonIndex = formatter.index(of: colonToken, before: i)
-                else { return }
-
-            guard let tokens = specialValueTokens(formatter, of: valueToken, with: valueTokenIndex, for: token) else {
-                return formatter.removeTokens(inRange: colonIndex ... i)
-            }
-
-            tokens.reversed().forEach(formatter.removeToken)
-        }
-    }
-
-    // MARK: - Helper functions
-
-    private static func determines(_ valueToken: Token, for typeToken: Token) -> Bool {
-        switch (typeToken, valueToken) {
-        case  (.identifier("Bool"), .identifier(let string)) where ["true", "false"].contains(string):
-            return true
-        case  (.identifier("String"), .startOfScope(let string)) where ["\"", "\"\"\""].contains(string):
-            return true
-        case  (.identifier(let type), .identifier(let inittype)) where type == inittype:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private static func specialValueTokens(_ formatter: Formatter, of valueToken: Token, with valueTokenIndex: Int, for typeToken: Token) -> [Int]? {
-        var isInverted: Bool
-
-        switch valueToken {
-        case .identifier("CGFloat"):
-            isInverted = true
-        default:
-            isInverted = false
-        }
-
-        guard let startOfScopeToken = formatter.next(.nonSpaceOrComment, after: valueTokenIndex),
-            [.startOfScope("(")].contains(startOfScopeToken),
-            let startOfScopeIndex = formatter.index(of: startOfScopeToken, after: valueTokenIndex),
-            let endOfScopeIndex = formatter.endOfScope(at: startOfScopeIndex) else { return isInverted ? [] : nil }
-
-        guard formatter.nextToken(after: endOfScopeIndex) != .operator("!", .postfix) else { return [] }
-
-        return isInverted ? [valueTokenIndex, startOfScopeIndex, endOfScopeIndex] : nil
-    }
-
-    private static func insertOneLinebreak(_ formatter: Formatter, after tokenIndex: Int) {
-        guard let nextToken = formatter.nextToken(after: tokenIndex, where: { $0.isSpaceOrLinebreak == false }),
-            nextToken.isEndOfScope == false,
-            let nextTokenIndex = formatter.index(of: nextToken, after: tokenIndex)
-        else { return }
-
-        guard formatter.tokens[tokenIndex + 1 ..< nextTokenIndex].filter({ $0.isLinebreak }).count != 2 else { return }
-
-        formatter.insertLinebreak(at: tokenIndex + 1)
-    }
-
-    private static func insertOneLinebreak(_ formatter: Formatter, before tokenIndex: Int) {
-        guard let prevToken = formatter.lastToken(before: tokenIndex, where: { $0.isSpaceOrLinebreak == false }),
-            prevToken.isStartOfScope == false,
-            let prevTokenIndex = formatter.index(of: prevToken, before: tokenIndex)
-        else { return }
-
-        guard formatter.tokens[prevTokenIndex + 1 ..< tokenIndex].filter({ $0.isLinebreak }).count != 2 else { return }
-
-        formatter.insertLinebreak(at: tokenIndex)
     }
 }
