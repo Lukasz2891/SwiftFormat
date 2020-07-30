@@ -3357,7 +3357,8 @@ public struct _FormatRules {
     ) { formatter in
         formatter.forEachToken { i, _ in
             switch formatter.tokens[i] {
-            case .keyword("if"), .keyword("for"), .keyword("guard"), .keyword("while"), .keyword("func"):
+            case .keyword("if"), .keyword("for"), .keyword("guard"), .keyword("while"),
+                 .keyword("func"), .keyword("init"), .keyword("subscript"):
                 guard let openBraceIndex = formatter.index(of: .startOfScope("{"), after: i) else {
                     break
                 }
