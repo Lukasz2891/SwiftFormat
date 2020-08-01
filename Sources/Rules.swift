@@ -940,7 +940,11 @@ public struct _FormatRules {
     /// indenting can be configured with the `options` parameter of the formatter.
     public let indent = FormatRule(
         help: "Indent code in accordance with the scope level.",
+<<<<<<< HEAD
         orderAfter: ["trailingSpace", "wrap", "wrapArguments", "wrapMultilineStatementBraces"] + ststLinebreakRules,
+=======
+        orderAfter: ["trailingSpace", "wrap", "wrapArguments"],
+>>>>>>> fa47288b... Fix lint warnings re: wrapMultilineStatementBraces
         options: ["indent", "tabwidth", "smarttabs", "indentcase", "ifdef", "xcodeindentation"],
         sharedOptions: ["trimwhitespace", "closingparen"]
     ) { formatter in
@@ -1548,6 +1552,17 @@ public struct _FormatRules {
                     guard prevLineLength + length + 1 <= maxWidth else {
                         return
                     }
+                }
+                // Avoid conflicts with wrapMultilineStatementBraces
+                // TODO: find a better solution for this
+                if formatter.trackChanges, let keywordIndex = formatter
+                    .indexOfLastSignificantKeyword(at: prevIndex + 1, excluding: ["where"]),
+                    case let .keyword(keyword) = formatter.tokens[keywordIndex],
+                    ["if", "for", "guard", "while", "switch", "func", "init", "subscript",
+                     "extension", "class", "struct", "enum", "protocol"].contains(keyword),
+                    formatter.indentForLine(at: prevIndex) > formatter.indentForLine(at: keywordIndex)
+                {
+                    return
                 }
                 formatter.replaceTokens(inRange: prevIndex + 1 ..< i, with: [.space(" ")])
             }
@@ -3371,7 +3386,7 @@ public struct _FormatRules {
 
     public let wrapMultilineStatementBraces = FormatRule(
         help: "Wrap the opening brace of multiline statements.",
-        orderAfter: ["wrapArguments"],
+        orderAfter: ["indent", "braces", "wrapArguments"],
         sharedOptions: ["linebreaks"]
     ) { formatter in
         formatter.forEachToken { i, token in
