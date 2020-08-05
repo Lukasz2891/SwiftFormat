@@ -751,7 +751,6 @@ public struct _FormatRules {
     public let blankLinesAtStartOfScope = FormatRule(
         help: "Remove leading blank line at the start of a scope."
     ) { formatter in
-        guard formatter.options.removeBlankLines else { return }
         formatter.forEach(.startOfScope) { i, token in
             guard ["{", "(", "[", "<"].contains(token.string),
                 let indexOfFirstLineBreak = formatter.index(of: .nonSpaceOrComment, after: i),
@@ -772,7 +771,7 @@ public struct _FormatRules {
                 }
                 index += 1
             }
-            if indexOfFirstLineBreak != indexOfLastLineBreak {
+            if formatter.options.removeBlankLines, indexOfFirstLineBreak != indexOfLastLineBreak {
                 formatter.removeTokens(inRange: indexOfFirstLineBreak ..< indexOfLastLineBreak)
                 return
             }
@@ -784,7 +783,6 @@ public struct _FormatRules {
     public let blankLinesAtEndOfScope = FormatRule(
         help: "Remove trailing blank line at the end of a scope."
     ) { formatter in
-        guard formatter.options.removeBlankLines else { return }
         formatter.forEach(.endOfScope) { i, token in
             guard ["}", ")", "]", ">"].contains(token.string),
                 // If there is extra code after the closing scope on the same line, ignore it
@@ -808,7 +806,8 @@ public struct _FormatRules {
                 }
                 index -= 1
             }
-            if let indexOfFirstLineBreak = indexOfFirstLineBreak,
+            if formatter.options.removeBlankLines,
+                let indexOfFirstLineBreak = indexOfFirstLineBreak,
                 indexOfFirstLineBreak != indexOfLastLineBreak
             {
                 formatter.removeTokens(inRange: indexOfFirstLineBreak ..< indexOfLastLineBreak!)
@@ -825,7 +824,6 @@ public struct _FormatRules {
         """,
         sharedOptions: ["linebreaks"]
     ) { formatter in
-        guard formatter.options.insertBlankLines else { return }
         var spaceableScopeStack = [true]
         var isSpaceableScopeType = false
         formatter.forEachToken(onlyWhereEnabled: false) { i, token in
@@ -874,7 +872,7 @@ public struct _FormatRules {
                         fallthrough
                     }
                 default:
-                    if formatter.isEnabled,
+                    if formatter.isEnabled, formatter.options.insertBlankLines,
                         let firstLinebreakIndex = formatter.index(of: .linebreak, in: i + 1 ..< nextTokenIndex),
                         formatter.index(of: .linebreak, in: firstLinebreakIndex + 1 ..< nextTokenIndex) == nil
                     {
@@ -892,7 +890,6 @@ public struct _FormatRules {
         help: "Insert blank line before and after `MARK:` comments.",
         sharedOptions: ["linebreaks"]
     ) { formatter in
-        guard formatter.options.insertBlankLines else { return }
         formatter.forEachToken { i, token in
             guard case let .commentBody(comment) = token, comment.hasPrefix("MARK:"),
                 let startIndex = formatter.index(of: .nonSpace, before: i),
@@ -903,7 +900,8 @@ public struct _FormatRules {
             {
                 formatter.insertLinebreak(at: nextIndex)
             }
-            if let lastIndex = formatter.index(of: .linebreak, before: startIndex),
+            if formatter.options.insertBlankLines,
+                let lastIndex = formatter.index(of: .linebreak, before: startIndex),
                 let lastToken = formatter.last(.nonSpace, before: lastIndex),
                 !lastToken.isLinebreak, lastToken != .startOfScope("{")
             {
@@ -920,7 +918,7 @@ public struct _FormatRules {
     ) { formatter in
         guard !formatter.options.fragment else { return }
         var wasLinebreak = true
-        formatter.forEachToken { _, token in
+        formatter.forEachToken(onlyWhereEnabled: false) { _, token in
             switch token {
             case .linebreak:
                 wasLinebreak = true
@@ -1009,21 +1007,13 @@ public struct _FormatRules {
             return false
         }
 
-        // Disable when using range
-        // TODO: find better solution
-        if let range = formatter.range, formatter.tokens[0 ..< range.lowerBound].contains(where: {
-            $0.isStartOfScope && $0 != .startOfScope("//")
-        }) {
-            return
-        }
-
         if formatter.options.fragment,
             let firstIndex = formatter.index(of: .nonSpaceOrLinebreak, after: -1),
             let indentToken = formatter.token(at: firstIndex - 1), case let .space(string) = indentToken
         {
             indentStack[0] = string
         }
-        formatter.forEachToken { i, token in
+        formatter.forEachToken(onlyWhereEnabled: false) { i, token in
             func popScope() {
                 if linewrapStack.last == true {
                     indentStack.removeLast()
@@ -1117,12 +1107,12 @@ public struct _FormatRules {
                     }
                     switch formatter.options.ifdefIndent {
                     case .indent:
-                        i += formatter.insertSpace(indent, at: formatter.startOfLine(at: i))
+                        i += formatter.insertSpaceIfEnabled(indent, at: formatter.startOfLine(at: i))
                         indent += formatter.options.indent
                     case .noIndent:
-                        i += formatter.insertSpace(indent, at: formatter.startOfLine(at: i))
+                        i += formatter.insertSpaceIfEnabled(indent, at: formatter.startOfLine(at: i))
                     case .outdent:
-                        i += formatter.insertSpace("", at: formatter.startOfLine(at: i))
+                        i += formatter.insertSpaceIfEnabled("", at: formatter.startOfLine(at: i))
                     }
                 case "{" where formatter.options.closingParenOnSameLine && formatter.isStartOfClosure(at: i):
                     // When a trailing closure starts on the same line as the end of
@@ -1222,9 +1212,9 @@ public struct _FormatRules {
                 let start = formatter.startOfLine(at: i)
                 switch formatter.options.ifdefIndent {
                 case .indent, .noIndent:
-                    i += formatter.insertSpace(indent, at: start)
+                    i += formatter.insertSpaceIfEnabled(indent, at: start)
                 case .outdent:
-                    i += formatter.insertSpace("", at: start)
+                    i += formatter.insertSpaceIfEnabled("", at: start)
                 }
             default:
                 // Handle end of scope
@@ -1269,7 +1259,7 @@ public struct _FormatRules {
                         break
                     }
                     if token == .endOfScope("#endif"), formatter.options.ifdefIndent == .outdent {
-                        i += formatter.insertSpace("", at: start)
+                        i += formatter.insertSpaceIfEnabled("", at: start)
                     } else {
                         var indent = indentStack.last ?? ""
                         if [.endOfScope("case"), .endOfScope("default")].contains(token),
@@ -1278,7 +1268,7 @@ public struct _FormatRules {
                             indent += formatter.options.indent
                         }
                         let stringIndent = stringBodyIndentStack.last!
-                        i += formatter.insertSpace(stringIndent + indent, at: start)
+                        i += formatter.insertSpaceIfEnabled(stringIndent + indent, at: start)
                     }
                 } else if token == .endOfScope("#endif"), indentStack.count > 1 {
                     var indent = indentStack[indentStack.count - 2]
@@ -1291,9 +1281,9 @@ public struct _FormatRules {
                     }
                     switch formatter.options.ifdefIndent {
                     case .indent, .noIndent:
-                        i += formatter.insertSpace(indent, at: formatter.startOfLine(at: i))
+                        i += formatter.insertSpaceIfEnabled(indent, at: formatter.startOfLine(at: i))
                     case .outdent:
-                        i += formatter.insertSpace("", at: formatter.startOfLine(at: i))
+                        i += formatter.insertSpaceIfEnabled("", at: formatter.startOfLine(at: i))
                     }
                     if scopeStack.last == .startOfScope("#if") {
                         popScope()
@@ -1336,13 +1326,13 @@ public struct _FormatRules {
                     {
                         // Set indent for comment immediately before this line to match this line
                         if !formatter.isCommentedCode(at: startIndex + 1) {
-                            formatter.insertSpace(indent, at: startIndex + 1)
+                            formatter.insertSpaceIfEnabled(indent, at: startIndex + 1)
                         }
                         if case .endOfScope("*/") = prevToken,
                             var index = formatter.index(of: .startOfScope("/*"), after: startIndex)
                         {
                             while let linebreakIndex = formatter.index(of: .linebreak, after: index) {
-                                formatter.insertSpace(indent + " ", at: linebreakIndex + 1)
+                                formatter.insertSpaceIfEnabled(indent + " ", at: linebreakIndex + 1)
                                 index = linebreakIndex
                             }
                         }
@@ -1436,7 +1426,7 @@ public struct _FormatRules {
                 switch formatter.tokens[nextNonSpaceIndex] {
                 case .linebreak:
                     if formatter.options.truncateBlankLines {
-                        formatter.insertSpace("", at: i + 1)
+                        formatter.insertSpaceIfEnabled("", at: i + 1)
                     }
                 case .error, .keyword("#else"), .keyword("#elseif"), .endOfScope("#endif"),
                      .startOfScope("#if") where formatter.options.ifdefIndent != .indent:
@@ -1464,20 +1454,20 @@ public struct _FormatRules {
                     {
                         break
                     }
-                    formatter.insertSpace(indent, at: i + 1)
+                    formatter.insertSpaceIfEnabled(indent, at: i + 1)
                 case .endOfScope, .keyword("@unknown"):
                     if let scope = scopeStack.last {
                         switch scope {
                         case .startOfScope("/*"), .startOfScope("#if"),
                              .keyword("#else"), .keyword("#elseif"),
                              .startOfScope where scope.isStringDelimiter:
-                            formatter.insertSpace(indent, at: i + 1)
+                            formatter.insertSpaceIfEnabled(indent, at: i + 1)
                         default:
                             break
                         }
                     }
                 default:
-                    formatter.insertSpace(indent, at: i + 1)
+                    formatter.insertSpaceIfEnabled(indent, at: i + 1)
                 }
 
                 if linewrapped, shouldIndentNextLine(at: i) {
@@ -2454,6 +2444,8 @@ public struct _FormatRules {
         help: "Insert/remove explicit `self` where applicable.",
         options: ["self", "selfrequired"]
     ) { formatter in
+        guard !formatter.options.fragment else { return }
+
         func processBody(at index: inout Int,
                          localNames: Set<String>,
                          members: Set<String>,
@@ -3037,6 +3029,8 @@ public struct _FormatRules {
         help: "Mark unused function arguments with `_`.",
         options: ["stripunusedargs"]
     ) { formatter in
+        guard !formatter.options.fragment else { return }
+
         func removeUsed<T>(from argNames: inout [String], with associatedData: inout [T], in range: CountableRange<Int>) {
             for i in range {
                 let token = formatter.tokens[i]
@@ -3363,7 +3357,7 @@ public struct _FormatRules {
             }
         }
 
-        formatter.forEachToken { i, token in
+        formatter.forEachToken(onlyWhereEnabled: false) { i, token in
             if i < currentIndex {
                 return
             }
@@ -3376,9 +3370,13 @@ public struct _FormatRules {
                     indent += formatter.options.indent
                 }
                 alreadyLinewrapped = true
-                let spaceAdded = formatter.insertSpace(indent, at: breakPoint + 1)
-                formatter.insertLinebreak(at: breakPoint + 1)
-                currentIndex = breakPoint + spaceAdded + 2
+                if formatter.isEnabled {
+                    let spaceAdded = formatter.insertSpace(indent, at: breakPoint + 1)
+                    formatter.insertLinebreak(at: breakPoint + 1)
+                    currentIndex = breakPoint + spaceAdded + 2
+                } else {
+                    currentIndex = breakPoint + 1
+                }
             } else {
                 currentIndex = formatter.endOfLine(at: i)
             }
@@ -3645,6 +3643,7 @@ public struct _FormatRules {
         sharedOptions: ["linebreaks"]
     ) { formatter in
         guard !formatter.options.fragment else { return }
+
         let header: String
         switch formatter.options.fileHeader {
         case .ignore:
@@ -4294,9 +4293,8 @@ public struct _FormatRules {
     public let redundantFileprivate = FormatRule(
         help: "Prefer `private` over `fileprivate` where equivalent."
     ) { formatter in
-        guard !formatter.options.fragment else {
-            return
-        }
+        guard !formatter.options.fragment else { return }
+
         var hasUnreplacedFileprivates = false
         formatter.forEach(.keyword("fileprivate")) { i, _ in
             // check if definition is at file-scope
