@@ -4467,7 +4467,8 @@ public struct _FormatRules {
 
     /// Reorders "yoda conditions" where constant is placed on lhs of a comparison
     public let yodaConditions = FormatRule(
-        help: "Prefer constant values to be on the right-hand-side of expressions."
+        help: "Prefer constant values to be on the right-hand-side of expressions.",
+        options: ["yodaswap"]
     ) { formatter in
         let comparisonOperators = ["==", "!=", "<", "<=", ">", ">="].map {
             Token.operator($0, .infix)
@@ -4508,10 +4509,7 @@ public struct _FormatRules {
                 return false
             }
             switch token {
-            case .number, .identifier("true"), .identifier("false"), .identifier("nil"),
-                 .operator(".", .prefix) where formatter.token(at: index + 1)?.isIdentifier == true,
-                 .identifier where formatter.token(at: index - 1) == .operator(".", .prefix) &&
-                     formatter.token(at: index - 2) != .operator("\\", .prefix):
+            case .number, .identifier("true"), .identifier("false"), .identifier("nil"):
                 return true
             case .endOfScope("]"), .endOfScope(")"):
                 guard let startIndex = formatter.index(of: .startOfScope, before: index),
@@ -4530,6 +4528,13 @@ public struct _FormatRules {
             case .startOfScope, .endOfScope:
                 // TODO: what if string contains interpolation?
                 return token.isStringDelimiter
+            case _ where formatter.options.yodaSwap == .literalsOnly:
+                // Don't treat .members as constant
+                return false
+            case .operator(".", .prefix) where formatter.token(at: index + 1)?.isIdentifier == true,
+                 .identifier where formatter.token(at: index - 1) == .operator(".", .prefix) &&
+                     formatter.token(at: index - 2) != .operator("\\", .prefix):
+                return true
             default:
                 return false
             }
