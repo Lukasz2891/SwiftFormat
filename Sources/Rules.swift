@@ -36,6 +36,7 @@ public final class FormatRule: Equatable, Comparable {
     fileprivate(set) var name = ""
     fileprivate(set) var index = 0
     let help: String
+    let runOnceOnly: Bool
     let orderAfter: [String]
     let options: [String]
     let sharedOptions: [String]
@@ -49,6 +50,7 @@ public final class FormatRule: Equatable, Comparable {
     }
 
     fileprivate init(help: String = "",
+                     runOnceOnly: Bool = false,
                      orderAfter: [String] = [],
                      options: [String] = [],
                      sharedOptions: [String] = [],
@@ -56,6 +58,7 @@ public final class FormatRule: Equatable, Comparable {
     {
         self.fn = fn
         self.help = help
+        self.runOnceOnly = runOnceOnly
         self.orderAfter = orderAfter
         self.options = options
         self.sharedOptions = sharedOptions
@@ -938,11 +941,7 @@ public struct _FormatRules {
     /// indenting can be configured with the `options` parameter of the formatter.
     public let indent = FormatRule(
         help: "Indent code in accordance with the scope level.",
-<<<<<<< HEAD
-        orderAfter: ["trailingSpace", "wrap", "wrapArguments", "wrapMultilineStatementBraces"] + ststLinebreakRules,
-=======
-        orderAfter: ["trailingSpace", "wrap", "wrapArguments"],
->>>>>>> fa47288b... Fix lint warnings re: wrapMultilineStatementBraces
+        orderAfter: ["trailingSpace", "wrap", "wrapArguments"] + ststLinebreakRules,
         options: ["indent", "tabwidth", "smarttabs", "indentcase", "ifdef", "xcodeindentation"],
         sharedOptions: ["trimwhitespace", "closingparen", "allman"]
     ) { formatter in
@@ -3703,6 +3702,7 @@ public struct _FormatRules {
     /// Strip header comments from the file
     public let fileHeader = FormatRule(
         help: "Use specified source file header template for all files.",
+        runOnceOnly: true,
         options: ["header"],
         sharedOptions: ["linebreaks"]
     ) { formatter in
@@ -4850,6 +4850,7 @@ public struct _FormatRules {
 
     public let organizeDeclarations = FormatRule(
         help: "Organizes declarations within class, struct, and enum bodies.",
+        runOnceOnly: true,
         options: ["categorymark", "beforemarks", "lifecycle", "structthreshold", "classthreshold", "enumthreshold"]
     ) { formatter in
         /// Categories of declarations within an individual type
