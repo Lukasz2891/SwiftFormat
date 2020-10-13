@@ -1446,7 +1446,7 @@ public struct _FormatRules {
                             indent += formatter.options.indent
                         }
                     } else if !formatter.options.xcodeIndentation || !isWrappedDeclaration() {
-                        indent += formatter.options.indent
+                        indent += formatter.linewrapIndent(at: i)
                     }
                     linewrapStack[linewrapStack.count - 1] = true
                     indentStack.append(indent)
@@ -3443,7 +3443,7 @@ public struct _FormatRules {
                 currentIndex = i + 1
             } else if let breakPoint = formatter.indexWhereLineShouldWrapInLine(at: i) {
                 if !alreadyLinewrapped {
-                    indent += formatter.options.indent
+                    indent += formatter.linewrapIndent(at: breakPoint)
                 }
                 alreadyLinewrapped = true
                 if formatter.isEnabled {
